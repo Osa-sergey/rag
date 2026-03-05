@@ -1,0 +1,12 @@
+# Neo4j: параметры подключения к графовой базе
+# ──────────────────────────────────────────────────────────────
+
+# URI для Bolt-протокола
+uri: bolt://localhost:7687
+
+# Учётные данные (должны совпадать с docker-compose)
+user: neo4j
+password: raptor_password
+
+# Имя базы данных (community edition всегда "neo4j")
+database: neo4j

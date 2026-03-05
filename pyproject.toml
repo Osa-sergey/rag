@@ -1,0 +1,36 @@
+[project]
+name = "raptor-pipeline"
+version = "0.1.0"
+description = "RAPTOR pipeline for hierarchical summarization and RAG"
+requires-python = ">=3.11"
+dependencies = [
+    # LangChain ecosystem
+    "langchain>=0.3.0",
+    "langchain-community>=0.3.0",
+    "langchain-ollama>=0.3.0",
+    "langchain-openai>=0.3.0",
+    "langchain-qdrant>=0.2.0",
+    # Vector store
+    "qdrant-client>=1.12.0",
+    # Graph DB
+    "neo4j>=5.0.0",
+    # Configuration
+    "hydra-core>=1.3.0",
+    "omegaconf>=2.3.0",
+    # ML / clustering
+    "scikit-learn>=1.5.0",
+    "numpy>=1.26.0",
+    # Tokenization
+    "tiktoken>=0.8.0",
+    # Existing dependencies
+    "pyyaml>=6.0",
+    "markdownify>=0.14.0",
+    "markdown-it-py>=3.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["document_parser", "raptor_pipeline"]

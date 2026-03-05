@@ -1,0 +1,28 @@
+# Summarizer: LLM-based
+# Суммаризация групп чанков для построения верхних уровней RAPTOR-дерева.
+# ──────────────────────────────────────────────────────────────
+
+# Провайдер LLM (deepseek | ollama)
+provider: deepseek
+
+# API ключ
+api_key: ${oc.env:OPENROUTER_API_KEY,""}
+
+# Имя модели.
+# DeepSeek R1: deepseek-reasoner
+# Ollama: deepseek-r1:7b, llama3, mistral
+# DeepSeek R1 via OpenRouter
+model_name: deepseek/deepseek-r1
+
+# Базовый URL API (OpenRouter)
+base_url: https://openrouter.ai/api/v1
+
+# Температура генерации (0–2).
+# ↓ ниже -> более детерминированные резюме (рекомендуется для RAPTOR).
+# ↑ выше -> более разнообразные, но менее предсказуемые.
+temperature: 0.3
+
+# Максимальное количество токенов в ответе LLM.
+# Для суммаризации обычно достаточно 512–1024.
+# ↑ увеличение → более подробные суммаризации, дороже.
+max_tokens: 1024

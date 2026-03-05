@@ -1,0 +1,20 @@
+# Embeddings: DeepSeek API
+# Используется OpenAI-совместимый API DeepSeek для вычисления эмбеддингов.
+# ──────────────────────────────────────────────────────────────
+
+# Тип провайдера (deepseek | ollama)
+provider: deepseek
+
+# API ключ DeepSeek. Установите через переменную окружения
+# или переопределите в CLI: embeddings.api_key=sk-xxx
+api_key: ${oc.env:DEEPSEEK_API_KEY,""}
+
+# Имя модели для вычисления эмбеддингов
+model_name: deepseek-chat
+
+# Базовый URL API
+base_url: https://api.deepseek.com/v1
+
+# Размерность выходного вектора эмбеддинга.
+# Должен совпадать с vector_size в конфиге Qdrant.
+embedding_dim: 1536

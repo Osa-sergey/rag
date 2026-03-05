@@ -1,0 +1,16 @@
+# Embeddings: Ollama (локальная модель)
+# Используется локально развёрнутая модель через Ollama.
+# ──────────────────────────────────────────────────────────────
+
+provider: ollama
+
+# Имя модели Ollama для эмбеддингов.
+# Популярные варианты: nomic-embed-text, mxbai-embed-large, all-minilm
+model_name: nomic-embed-text
+
+# URL Ollama API
+base_url: http://localhost:11434
+
+# Размерность выходного вектора.
+# nomic-embed-text → 768, mxbai-embed-large → 1024
+embedding_dim: 768

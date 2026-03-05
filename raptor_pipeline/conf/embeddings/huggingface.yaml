@@ -1,0 +1,21 @@
+# Embeddings: HuggingFace (локальная модель на CPU/GPU)
+# Используется локальная модель через sentence-transformers.
+# Отлично подходит, если нет видеокарты (GPU) или Ollama.
+# ──────────────────────────────────────────────────────────────
+
+provider: huggingface
+
+# Модель sentence-transformers.
+# BAAI/bge-small-en-v1.5 — лёгкая (130MB) и быстрая, топ для CPU
+model_name: BAAI/bge-small-en-v1.5
+
+# Где вычислять (cpu или cuda)
+model_kwargs:
+  device: cpu
+
+encode_kwargs:
+  normalize_embeddings: true
+
+# Размерность выходного вектора для BAAI/bge-small.
+# Важно: это значение ДОЛЖНО совпадать с vector_size в конфиге Qdrant!
+embedding_dim: 384
