@@ -10,9 +10,9 @@
 defaults:
   - chunker: hybrid
   - embeddings: deepseek
-  - summarizer: deepseek
+  - summarizer: ollama
   - raptor: default
-  - knowledge_graph: deepseek
+  - knowledge_graph: ollama
   - stores@stores.qdrant: qdrant
   - stores@stores.neo4j: neo4j
   - prompts@prompts.summarize: summarize
