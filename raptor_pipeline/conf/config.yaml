@@ -32,6 +32,9 @@ input_file: null
 # Уровень логирования (DEBUG / INFO / WARNING / ERROR)
 log_level: INFO
 
+# Максимальное количество параллельных запросов к LLM
+max_concurrency: 4
+
 # Показывать ли полный текст при выводе структуры дерева (используется утилитами)
 full_text: false
 

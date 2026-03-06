@@ -112,15 +112,26 @@ class RaptorPipeline:
         all_raw_keywords = []
         
         from raptor_pipeline.knowledge_graph.base import Keyword
-        
-        for node in nodes:
+        from concurrent.futures import ThreadPoolExecutor
+
+        max_workers = self.cfg.get("max_concurrency", 4)
+
+        def extract_node_kws(node):
             kws = self._kw_extractor.extract(node.text, node.node_id)
             for k in kws:
                 k.word = k.word.strip()
                 if not (len(k.word) > 1 and k.word.isupper()):
                     k.word = k.word.lower()
+            return node.node_id, kws
+
+        logger.info("  + Extracting raw keywords from %d nodes (parallel, workers=%d)...", len(nodes), max_workers)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            kw_results = list(executor.map(extract_node_kws, nodes))
+
+        for node_id, kws in kw_results:
+            raw_keywords_by_node[node_id] = kws
+            for k in kws:
                 all_raw_keywords.append({"word": k.word, "category": k.category})
-            raw_keywords_by_node[node.node_id] = kws
 
         # 3.2: Refine keywords globally
         logger.info("  + Refining %d raw keywords globally...", len(all_raw_keywords))
@@ -142,6 +153,7 @@ class RaptorPipeline:
         all_relations = []
         keywords_by_node: dict[str, list[str]] = {}
         
+        nodes_with_refined_kws = []
         for node in nodes:
             node_refined_kws = []
             node_kw_words = set()
@@ -162,15 +174,25 @@ class RaptorPipeline:
                         all_refined_keywords.append(refined_obj)
             
             keywords_by_node[node.node_id] = list(node_kw_words)
-            
-            # Step 3.4: Extract Relations using REFINED keywords
             if node_refined_kws:
-                rels = self._rel_extractor.extract(node.text, node_refined_kws, node.node_id)
-                for r in rels:
-                    r.subject = r.subject.strip()
-                    r.object = r.object.strip()
-                    r.predicate = r.predicate.lower().strip()
-                all_relations.extend(rels)
+                nodes_with_refined_kws.append((node, node_refined_kws))
+
+        # Step 3.4: Extract Relations using REFINED keywords (parallel)
+        def extract_node_rels(node_item):
+            node, refined_kws = node_item
+            rels = self._rel_extractor.extract(node.text, refined_kws, node.node_id)
+            for r in rels:
+                r.subject = r.subject.strip()
+                r.object = r.object.strip()
+                r.predicate = r.predicate.lower().strip()
+            return rels
+
+        logger.info("  + Extracting relations from %d nodes (parallel, workers=%d)...", len(nodes_with_refined_kws), max_workers)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            rel_results = list(executor.map(extract_node_rels, nodes_with_refined_kws))
+
+        for rels in rel_results:
+            all_relations.extend(rels)
 
         # Deduplicate refined keywords for reporting
         unique_kws = {k.word for k in all_refined_keywords}

@@ -62,6 +62,7 @@ class RaptorTreeBuilder:
         self.min_cluster_size: int = cfg.get("min_cluster_size", 3)
         self.reduction_factor: float = cfg.get("reduction_factor", 0.5)
         self.clustering_threshold: float = cfg.get("clustering_threshold", 0.1)
+        self.max_concurrency: int = cfg.get("max_concurrency", 4)
         self._embedder = embedding_provider
         self._summarizer = summarizer
 
@@ -108,13 +109,16 @@ class RaptorTreeBuilder:
             if not clusters:
                 break
 
+            from concurrent.futures import ThreadPoolExecutor
+
+            max_workers = self.max_concurrency
             next_level_nodes: list[RaptorNode] = []
-            for cluster_nodes in clusters:
+
+            def process_cluster(cluster_nodes: list[RaptorNode]) -> RaptorNode:
                 texts = [n.text for n in cluster_nodes]
                 summary = self._summarizer.summarize(texts)
                 emb = self._embedder.embed_texts([summary])[0]
-
-                parent = RaptorNode(
+                return RaptorNode(
                     node_id=str(uuid.uuid4()),
                     text=summary,
                     embedding=emb,
@@ -123,8 +127,12 @@ class RaptorTreeBuilder:
                     article_id=cluster_nodes[0].article_id,
                     metadata={"cluster_size": len(cluster_nodes)},
                 )
-                next_level_nodes.append(parent)
-                all_nodes.append(parent)
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                results = list(executor.map(process_cluster, clusters))
+
+            next_level_nodes = results
+            all_nodes.extend(next_level_nodes)
 
             logger.info(
                 "RAPTOR level %d: %d clusters -> %d nodes",
