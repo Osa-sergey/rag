@@ -9,7 +9,7 @@
 
 defaults:
   - chunker: hybrid
-  - embeddings: deepseek
+  - embeddings: huggingface
   - summarizer: ollama
   - raptor: default
   - knowledge_graph: ollama

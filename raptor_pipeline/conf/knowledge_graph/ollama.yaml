@@ -5,7 +5,7 @@
 provider: ollama
 
 # Имя модели в Ollama.
-model_name: qwen3-vl:8b
+model_name: gemma3:12b
 
 # URL API
 base_url: http://localhost:11434
