@@ -74,6 +74,10 @@ class RaptorPipeline:
         self._vector_store = QdrantVectorStore(cfg.stores.qdrant)
         self._graph_store = Neo4jGraphStore(cfg.stores.neo4j)
 
+        # Parallelism & batching
+        self._max_workers: int = cfg.get("max_concurrency", 8)
+        self._batch_size: int = cfg.get("batch_size", 8)
+
     # ------------------------------------------------------------------
     def init_stores(self) -> None:
         """Create collections / indexes if they don't exist yet."""
@@ -81,11 +85,47 @@ class RaptorPipeline:
         self._graph_store.ensure_indexes()
 
     # ------------------------------------------------------------------
+    @staticmethod
+    def _run_in_batches(func, items: list, batch_size: int, max_workers: int) -> list:
+        """Execute *func* over *items* in controlled batches.
+
+        Each batch of up to *batch_size* items is processed in parallel
+        using a ThreadPoolExecutor with *max_workers* threads.  The next
+        batch starts only after the current one completes, which prevents
+        flooding the LLM server with too many simultaneous requests.
+
+        Returns a flat list of results in the same order as *items*.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        all_results: list = []
+        total = len(items)
+        n_batches = (total + batch_size - 1) // batch_size
+
+        for batch_idx in range(n_batches):
+            start = batch_idx * batch_size
+            end = min(start + batch_size, total)
+            batch = items[start:end]
+
+            logger.debug(
+                "    batch %d/%d  (%d items, workers=%d)",
+                batch_idx + 1, n_batches, len(batch), max_workers,
+            )
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                batch_results = list(executor.map(func, batch))
+            all_results.extend(batch_results)
+
+        return all_results
+
+    # ------------------------------------------------------------------
     def process_file(self, yaml_path: Path) -> dict[str, Any]:
         """Run the full pipeline on a single YAML file.
 
         Returns a summary dict with counts of chunks, nodes, keywords, etc.
         """
+        from raptor_pipeline.knowledge_graph.base import Keyword
+
         data = load_yaml(yaml_path)
         article_id = data.get("article_id", yaml_path.stem)
         document = data.get("document", [])
@@ -106,28 +146,40 @@ class RaptorPipeline:
 
         # ── Step 3: Knowledge graph extraction (Hierarchical) ──
         logger.info("  + Extracting Knowledge Graph from %d nodes...", len(nodes))
-        
-        # 3.1: Extract raw keywords
-        raw_keywords_by_node = {}
-        all_raw_keywords = []
-        
-        from raptor_pipeline.knowledge_graph.base import Keyword
-        from concurrent.futures import ThreadPoolExecutor
 
-        max_workers = self.cfg.get("max_concurrency", 4)
+        # Maximum text length sent to LLM (chars).  Longer texts
+        # (e.g. high-level RAPTOR summaries) are truncated to keep
+        # inference fast and prevent OOM on the model side.
+        max_text_chars: int = self.cfg.get("max_text_chars", 3000)
 
-        def extract_node_kws(node):
-            kws = self._kw_extractor.extract(node.text, node.node_id)
+        # 3.1: Extract raw keywords ─── batched parallel ───────
+        def _extract_node_kws(node: RaptorNode):
+            orig_len = len(node.text)
+            text = node.text[:max_text_chars]
+            if orig_len > max_text_chars:
+                logger.debug(
+                    "    [kw] node %s truncated: %d -> %d chars",
+                    node.node_id, orig_len, max_text_chars,
+                )
+            kws = self._kw_extractor.extract(text, node.node_id)
             for k in kws:
                 k.word = k.word.strip()
                 if not (len(k.word) > 1 and k.word.isupper()):
                     k.word = k.word.lower()
             return node.node_id, kws
 
-        logger.info("  + Extracting raw keywords from %d nodes (parallel, workers=%d)...", len(nodes), max_workers)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            kw_results = list(executor.map(extract_node_kws, nodes))
+        logger.info(
+            "  + Extracting raw keywords from %d nodes "
+            "(batch_size=%d, workers=%d, max_text=%d chars)...",
+            len(nodes), self._batch_size, self._max_workers, max_text_chars,
+        )
+        kw_results = self._run_in_batches(
+            _extract_node_kws, nodes,
+            self._batch_size, self._max_workers,
+        )
 
+        raw_keywords_by_node: dict[str, list] = {}
+        all_raw_keywords: list[dict] = []
         for node_id, kws in kw_results:
             raw_keywords_by_node[node_id] = kws
             for k in kws:
@@ -136,67 +188,107 @@ class RaptorPipeline:
         # 3.2: Refine keywords globally
         logger.info("  + Refining %d raw keywords globally...", len(all_raw_keywords))
         refined_list = self._kw_refiner.refine(all_raw_keywords)
-        
-        raw_to_refined = {}
+
+        # Build mapping: original_word (lowercased) -> refined info.
+        # Both sides are lowercased to avoid case-mismatch between
+        # the extractor output and the refiner's `original_words`.
+        raw_to_refined: dict[str, dict] = {}
         all_refined_keywords: list[Keyword] = []
-        
+
         for item in refined_list:
             refined_word = item.get("refined_word", "").strip()
             category = item.get("category", "other")
             if not refined_word:
                 continue
-            
             for orig in item.get("original_words", []):
-                raw_to_refined[orig.strip()] = {"word": refined_word, "category": category}
+                key = orig.strip().lower()
+                raw_to_refined[key] = {"word": refined_word, "category": category}
 
-        # 3.3: Map keywords to chunks and extract relations
-        all_relations = []
+        logger.info(
+            "  + Refiner produced %d items, raw_to_refined map has %d entries",
+            len(refined_list), len(raw_to_refined),
+        )
+
+        # 3.3: Map keywords to chunks.
+        # If a raw keyword has no match in raw_to_refined (refiner
+        # dropped it or returned a different spelling), use the raw
+        # keyword as-is instead of silently losing it.
         keywords_by_node: dict[str, list[str]] = {}
-        
-        nodes_with_refined_kws = []
+        nodes_with_refined_kws: list[tuple] = []
+        unmatched_count = 0
+
         for node in nodes:
-            node_refined_kws = []
-            node_kw_words = set()
-            
+            node_refined_kws: list[Keyword] = []
+            node_kw_words: set[str] = set()
+
             for raw_kw in raw_keywords_by_node[node.node_id]:
-                mapping = raw_to_refined.get(raw_kw.word)
+                lookup_key = raw_kw.word.lower()
+                mapping = raw_to_refined.get(lookup_key)
+
                 if mapping:
-                    refined_word = mapping["word"]
-                    if refined_word not in node_kw_words:
-                        node_kw_words.add(refined_word)
-                        refined_obj = Keyword(
-                            word=refined_word, 
-                            category=mapping["category"], 
-                            confidence=raw_kw.confidence, 
-                            chunk_id=node.node_id
-                        )
-                        node_refined_kws.append(refined_obj)
-                        all_refined_keywords.append(refined_obj)
-            
+                    word = mapping["word"]
+                    category = mapping["category"]
+                else:
+                    # Fallback — keep the raw keyword as-is
+                    word = raw_kw.word
+                    category = raw_kw.category
+                    unmatched_count += 1
+
+                if word not in node_kw_words:
+                    node_kw_words.add(word)
+                    refined_obj = Keyword(
+                        word=word,
+                        category=category,
+                        confidence=raw_kw.confidence,
+                        chunk_id=node.node_id,
+                    )
+                    node_refined_kws.append(refined_obj)
+                    all_refined_keywords.append(refined_obj)
+
             keywords_by_node[node.node_id] = list(node_kw_words)
             if node_refined_kws:
                 nodes_with_refined_kws.append((node, node_refined_kws))
 
-        # Step 3.4: Extract Relations using REFINED keywords (parallel)
-        def extract_node_rels(node_item):
+        if unmatched_count:
+            logger.warning(
+                "  ! %d raw keywords had no match in refiner output "
+                "(kept as-is)", unmatched_count,
+            )
+
+        # 3.4: Extract relations ─── batched parallel ──────────
+        def _extract_node_rels(node_item):
             node, refined_kws = node_item
-            rels = self._rel_extractor.extract(node.text, refined_kws, node.node_id)
+            orig_len = len(node.text)
+            text = node.text[:max_text_chars]
+            if orig_len > max_text_chars:
+                logger.debug(
+                    "    [rel] node %s truncated: %d -> %d chars",
+                    node.node_id, orig_len, max_text_chars,
+                )
+            rels = self._rel_extractor.extract(text, refined_kws, node.node_id)
             for r in rels:
                 r.subject = r.subject.strip()
                 r.object = r.object.strip()
                 r.predicate = r.predicate.lower().strip()
             return rels
 
-        logger.info("  + Extracting relations from %d nodes (parallel, workers=%d)...", len(nodes_with_refined_kws), max_workers)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            rel_results = list(executor.map(extract_node_rels, nodes_with_refined_kws))
+        logger.info(
+            "  + Extracting relations from %d nodes "
+            "(batch_size=%d, workers=%d)...",
+            len(nodes_with_refined_kws), self._batch_size, self._max_workers,
+        )
+        rel_results = self._run_in_batches(
+            _extract_node_rels, nodes_with_refined_kws,
+            self._batch_size, self._max_workers,
+        )
 
+        all_relations = []
         for rels in rel_results:
             all_relations.extend(rels)
 
         # Deduplicate refined keywords for reporting
         unique_kws = {k.word for k in all_refined_keywords}
-        
+
         logger.info(
             "  + Final: %d unique keywords, %d relations from all tree levels",
             len(unique_kws),
@@ -209,7 +301,6 @@ class RaptorPipeline:
 
         # ── Step 5: Store in Neo4j ────────────────────────────
         self._graph_store.store_article(article_id)
-        # We store all extracted instances; Neo4jGraphStore should handle merges
         self._graph_store.store_keywords(article_id, all_refined_keywords)
         self._graph_store.store_relations(article_id, all_relations)
         logger.info("  + Stored KG in Neo4j")

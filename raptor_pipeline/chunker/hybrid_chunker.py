@@ -51,10 +51,12 @@ class HybridChunker(BaseChunker):
                 
             if is_header:
                 current_header = raw_text
+                # Headers are used only as context for subsequent blocks,
+                # not as standalone chunks.
+                continue
 
-            # If it's not a header and we have a current header, prepend context 
-            # (but only for the LLM's understanding, so we add it to the text)
-            if not is_header and current_header:
+            # Prepend section context so the LLM understands the scope
+            if current_header:
                 text = f"[Section: {current_header}]\n{raw_text}"
             else:
                 text = raw_text
@@ -80,8 +82,7 @@ class HybridChunker(BaseChunker):
             for group in sentence_groups:
                 final_subgroups = self._ensure_length_limit(group)
                 for subgroup_raw_text in final_subgroups:
-                    # Inject header context into subgroup text as well
-                    if not is_header and current_header:
+                    if current_header:
                         subgroup_text = f"[Section: {current_header}]\n{subgroup_raw_text}"
                     else:
                         subgroup_text = subgroup_raw_text

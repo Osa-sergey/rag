@@ -17,7 +17,7 @@ temperature: 0.1
 format: json
 
 # Максимальное количество токенов в ответе.
-max_tokens: 1024
+max_tokens: 2048
 
 # Максимальное число ключевых слов на чанк.
 max_keywords: 15

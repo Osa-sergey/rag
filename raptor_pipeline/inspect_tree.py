@@ -25,7 +25,8 @@ def print_tree(nodes: dict, node_id: str, indent: str = "", is_last: bool = True
         text_snippet = ": " + text[:100].replace("\n", " ").strip() + "..."
     
     marker = "└── " if is_last else "├── "
-    print(f"{indent}{marker}[Level {level}] ID: {node_id}")
+    type_label = "📄 ТЕКСТ" if level == 0 else "📝 САММАРИ"
+    print(f"{indent}{marker}[Level {level} | {type_label}] ID: {node_id}")
     if show_full_text:
         print(f"{indent}{'    ' if is_last else '│   '}Text:{text_snippet}")
     else:

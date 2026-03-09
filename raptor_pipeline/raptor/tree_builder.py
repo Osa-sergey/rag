@@ -80,6 +80,8 @@ class RaptorTreeBuilder:
         leaf_texts = [c.text for c in chunks]
         leaf_embeddings = self._embedder.embed_texts(leaf_texts)
 
+        article_id = chunks[0].article_id if chunks else "unknown"
+
         for chunk, emb in zip(chunks, leaf_embeddings):
             node = RaptorNode(
                 node_id=chunk.chunk_id,
@@ -114,22 +116,28 @@ class RaptorTreeBuilder:
             max_workers = self.max_concurrency
             next_level_nodes: list[RaptorNode] = []
 
-            def process_cluster(cluster_nodes: list[RaptorNode]) -> RaptorNode:
+            # Counter for readable summary node IDs
+            cluster_counter = 0
+
+            def process_cluster(args: tuple) -> RaptorNode:
+                idx, cluster_nodes = args
                 texts = [n.text for n in cluster_nodes]
                 summary = self._summarizer.summarize(texts)
                 emb = self._embedder.embed_texts([summary])[0]
+                node_id = f"{article_id}_summary_L{level}_{idx:03d}"
                 return RaptorNode(
-                    node_id=str(uuid.uuid4()),
+                    node_id=node_id,
                     text=summary,
                     embedding=emb,
                     level=level,
                     children_ids=[n.node_id for n in cluster_nodes],
                     article_id=cluster_nodes[0].article_id,
-                    metadata={"cluster_size": len(cluster_nodes)},
+                    metadata={"cluster_size": len(cluster_nodes), "type": "summary"},
                 )
 
+            indexed_clusters = list(enumerate(clusters))
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                results = list(executor.map(process_cluster, clusters))
+                results = list(executor.map(process_cluster, indexed_clusters))
 
             next_level_nodes = results
             all_nodes.extend(next_level_nodes)
