@@ -1,4 +1,5 @@
 from omegaconf import DictConfig
+import logging
 
 from raptor_pipeline.knowledge_graph.base import RefinedKeywordListSO
 from raptor_pipeline.summarizer.llm_summarizer import _build_llm
