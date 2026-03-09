@@ -35,6 +35,7 @@ def _build_llm(cfg: DictConfig):
             base_url=cfg.get("base_url", "http://localhost:11434"),
             temperature=cfg.get("temperature", 0.3),
             num_predict=cfg.get("max_tokens", 1024),
+            format=cfg.get("format"),
         )
     raise ValueError(f"Unknown summariser LLM provider: {provider}")
 
