@@ -22,8 +22,8 @@ class LLMRelationExtractor(BaseRelationExtractor):
     """
 
     def __init__(self, cfg: DictConfig, prompt_cfg: DictConfig) -> None:
-        llm = _build_llm(cfg)
-        self._structured_llm = llm.with_structured_output(RelationListSO)
+        self._llm = _build_llm(cfg)
+        self._structured_llm = self._llm.with_structured_output(RelationListSO)
         
         self._max_relations: int = cfg.get("max_relations", 20)
         self._confidence_threshold: float = cfg.get("confidence_threshold", 0.5)
@@ -36,6 +36,21 @@ class LLMRelationExtractor(BaseRelationExtractor):
             "LLMRelationExtractor ready (SO enabled, v%s)",
             self._prompt_version
         )
+
+    def _clean_json_text(self, text: str) -> str:
+        """Strip markdown code blocks and reasoning tags."""
+        import re
+        text = text.strip()
+        # Remove reasoning/thinking tags
+        text = re.sub(r'<(thought|think)>.*?</\1>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        # Remove markdown code blocks
+        if "```" in text:
+            match = re.search(r'```(?:json)?\s*(.*?)\s*```', text, re.DOTALL | re.IGNORECASE)
+            if match:
+                text = match.group(1)
+            else:
+                text = text.replace("```json", "").replace("```", "")
+        return text.strip()
 
     def extract(
         self,
@@ -52,27 +67,64 @@ class LLMRelationExtractor(BaseRelationExtractor):
         )
         
         try:
+            # 1. Try primary structured output
             result: RelationListSO = self._structured_llm.invoke(prompt)
-            if not result or not result.relations:
-                return []
-
-            relations: list[Relation] = []
-            for item in result.relations:
-                rel = Relation(
-                    subject=item.subject.strip(),
-                    predicate=item.predicate.strip(),
-                    object=item.object.strip(),
-                    confidence=item.confidence,
-                    chunk_id=chunk_id,
-                )
-                if (
-                    rel.subject
-                    and rel.predicate
-                    and rel.object
-                    and rel.confidence >= self._confidence_threshold
-                ):
-                    relations.append(rel)
-            return relations[: self._max_relations]
+            if result and result.relations:
+                return self._parse_so_result(result, chunk_id)
+            
+            # 2. Fallback: Manual parse
+            return self._manual_fallback(prompt, chunk_id)
         except Exception as exc:
-            logger.warning("SO Relation extraction failed: %s", exc)
+            logger.debug("SO Relation extraction failed: %s. Trying manual fallback...", exc)
+            return self._manual_fallback(prompt, chunk_id)
+
+    def _manual_fallback(self, prompt: str, chunk_id: str) -> list[Relation]:
+        try:
+            raw_response = self._llm.invoke(prompt)
+            content = raw_response.content if hasattr(raw_response, "content") else str(raw_response)
+            clean_content = self._clean_json_text(content)
+            
+            parsed = json.loads(clean_content)
+            if isinstance(parsed, list):
+                result = RelationListSO(relations=parsed)
+            elif isinstance(parsed, dict):
+                if "relations" in parsed:
+                    result = RelationListSO(relations=parsed["relations"])
+                else:
+                    return []
+            else:
+                return []
+            return self._parse_so_result(result, chunk_id)
+        except Exception as exc:
+            logger.warning("Manual fallback relation extraction failed: %s", exc)
             return []
+
+    def _parse_so_result(self, result: RelationListSO, chunk_id: str) -> list[Relation]:
+        relations: list[Relation] = []
+        for item in result.relations:
+            if isinstance(item, dict):
+                subject = item.get('subject', '')
+                predicate = item.get('predicate', '')
+                obj = item.get('object', '')
+                confidence = item.get('confidence', 1.0)
+            else:
+                subject = getattr(item, 'subject', '')
+                predicate = getattr(item, 'predicate', '')
+                obj = getattr(item, 'object', '')
+                confidence = getattr(item, 'confidence', 1.0)
+
+            rel = Relation(
+                subject=str(subject).strip(),
+                predicate=str(predicate).strip(),
+                object=str(obj).strip(),
+                confidence=float(confidence),
+                chunk_id=chunk_id,
+            )
+            if (
+                rel.subject
+                and rel.predicate
+                and rel.object
+                and rel.confidence >= self._confidence_threshold
+            ):
+                relations.append(rel)
+        return relations[: self._max_relations]
