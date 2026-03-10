@@ -63,16 +63,32 @@ class HuggingFaceEmbeddingProvider(BaseEmbeddingProvider):
 
     def __init__(self, cfg: DictConfig) -> None:
         from langchain_huggingface import HuggingFaceEmbeddings
+        import os
+
+        # Prefer local_path if set and directory exists; fallback to model_name (HF Hub download)
+        local_path = cfg.get("local_path", None)
+        if local_path and os.path.isdir(local_path):
+            model_id = local_path
+            logger.info("Loading HuggingFace model from local path: %s", local_path)
+        else:
+            model_id = cfg.get("model_name", "BAAI/bge-small-en-v1.5")
+            if local_path:
+                logger.warning(
+                    "local_path '%s' not found, falling back to download '%s' from HuggingFace Hub",
+                    local_path, model_id,
+                )
+            else:
+                logger.info("No local_path set, downloading '%s' from HuggingFace Hub", model_id)
 
         self._model = HuggingFaceEmbeddings(
-            model_name=cfg.get("model_name", "BAAI/bge-small-en-v1.5"),
+            model_name=model_id,
             model_kwargs=cfg.get("model_kwargs", {"device": "cpu"}),
             encode_kwargs=cfg.get("encode_kwargs", {"normalize_embeddings": True}),
         )
         self.embedding_dim: int = cfg.get("embedding_dim", 384)
         logger.info(
             "HuggingFaceEmbeddingProvider initialised (model=%s, dim=%d)",
-            cfg.get("model_name"),
+            model_id,
             self.embedding_dim,
         )
 

@@ -4,8 +4,13 @@
 
 provider: huggingface
 
-# Модель sentence-transformers.
+# Модель sentence-transformers (используется как fallback, если local_path не задан).
 model_name: sergeyzh/BERTA
+
+# Путь к локально скачанной модели.
+# Если указан и директория существует — модель грузится с диска (без интернета).
+# Если не указан или директория не найдена — скачивается по model_name из HuggingFace Hub.
+local_path: D:/models/BERTA
 
 # Где вычислять (cpu, cuda, mps)
 model_kwargs:
