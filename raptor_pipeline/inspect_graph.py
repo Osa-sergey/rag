@@ -1,6 +1,7 @@
 """Utility script to browse Knowledge Graph in Neo4j and link back to Qdrant text."""
 from __future__ import annotations
 
+import sys
 import hydra
 from omegaconf import DictConfig
 from qdrant_client import QdrantClient
@@ -26,6 +27,37 @@ def get_chunk_text(q_client: QdrantClient, collection: str, chunk_id: str) -> st
     if points and points[0].payload:
         return points[0].payload.get("text", "[No text found]")
     return "[Chunk not found in Qdrant]"
+
+
+def _fix_cyrillic_args():
+    """Fix Hydra LexerNoViableAltException for Cyrillic values.
+
+    Hydra's OmegaConf lexer can't handle non-ASCII characters in
+    unquoted CLI values.  We wrap such values in single quotes so
+    OmegaConf treats them as plain strings.
+
+    Example:
+        word=оптимизация  →  word='оптимизация'
+    """
+    fixed = []
+    for arg in sys.argv[1:]:
+        if "=" in arg and not arg.startswith("--"):
+            key, value = arg.split("=", 1)
+            # If value has non-ASCII chars and is not already quoted
+            has_non_ascii = any(ord(c) > 127 for c in value)
+            already_quoted = (
+                (value.startswith("'") and value.endswith("'"))
+                or (value.startswith('"') and value.endswith('"'))
+            )
+            if has_non_ascii and not already_quoted:
+                arg = f"{key}='{value}'"
+        fixed.append(arg)
+    sys.argv[1:] = fixed
+
+
+# Apply the fix BEFORE Hydra parses args
+_fix_cyrillic_args()
+
 
 @hydra.main(config_path="conf", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
@@ -59,6 +91,7 @@ def main(cfg: DictConfig) -> None:
             print("=" * 60)
             print(f"Total: {len(keywords)} keywords")
             print("\nTip: Run with 'word=\"YOUR_KEYWORD\"' to see relationships and source text.")
+            print("     Для кириллицы:  word=оптимизация  (кавычки не нужны)")
         
         else:
             # Mode B: Inspect specific keyword
@@ -79,6 +112,8 @@ def main(cfg: DictConfig) -> None:
                 else:
                     print("Merged from: (not a merged keyword)")
             print()
+
+            # 1. Relations — grouped by source chunk
             result = session.run(
                 """
                 MATCH (s:Keyword {word: $word})-[r:RELATED_TO]->(o:Keyword)
@@ -94,23 +129,36 @@ def main(cfg: DictConfig) -> None:
             if not relations:
                 print(f"No relations found for '{keyword_to_inspect}'.")
             else:
-                print(f"Found {len(relations)} relations:")
-                processed_chunks = set()
-                
+                print(f"Found {len(relations)} relations:\n")
+
+                # Group relations by chunk_id
+                chunk_to_rels: dict[str, list[dict]] = {}
                 for rel in relations:
-                    print(f"\n[RELATION] ({rel['subject']}) --[{rel['predicate']}]--> ({rel['object']})")
                     c_ids = rel.get('chunk_ids', []) or []
-                    if isinstance(c_ids, str): c_ids = [c_ids]
+                    if isinstance(c_ids, str):
+                        c_ids = [c_ids]
+                    if not c_ids:
+                        c_ids = ["(no chunk)"]
                     for c_id in c_ids:
-                        if c_id and c_id not in processed_chunks:
-                            print(f"Source Chunk ID: {c_id}")
-                            text = get_chunk_text(q_client, q_collection, c_id)
-                            # Indented text
-                            indented_text = "\n".join(["    | " + line for line in text.split("\n")])
-                            print(f"Source Text:\n{indented_text}")
-                            processed_chunks.add(c_id)
+                        chunk_to_rels.setdefault(c_id, []).append(dict(rel))
+                
+                processed_chunks = set()
+                for c_id, rels_in_chunk in chunk_to_rels.items():
+                    print(f"{'─' * 50}")
+                    print(f"📦 Source Chunk: {c_id}")
+                    print(f"{'─' * 50}")
+                    for rel in rels_in_chunk:
+                        print(f"  ({rel['subject']}) --[{rel['predicate']}]--> ({rel['object']})")
+                    
+                    # Show chunk text once per group
+                    if c_id and c_id != "(no chunk)" and c_id not in processed_chunks:
+                        text = get_chunk_text(q_client, q_collection, c_id)
+                        indented_text = "\n".join(["    | " + line for line in text.split("\n")])
+                        print(f"\n  Source Text:\n{indented_text}")
+                        processed_chunks.add(c_id)
+                    print()
             
-            # 2. Entities related via HAS_KEYWORD (what articles mention this?)
+            # 2. Articles mentioning this keyword via HAS_KEYWORD
             result = session.run(
                 """
                 MATCH (a:Article)-[r:HAS_KEYWORD]->(k:Keyword {word: $word})
@@ -125,6 +173,36 @@ def main(cfg: DictConfig) -> None:
                     c_ids = art.get('chunk_ids', []) or []
                     if isinstance(c_ids, str): c_ids = [c_ids]
                     print(f"- Article: {art['article_id']} (Chunks: {', '.join(c_ids)})")
+
+            # 3. Cross-article references (REFERENCES edges) involving this keyword/article
+            result = session.run(
+                """
+                MATCH (src:Article)-[r:REFERENCES]->(tgt:Article)
+                WHERE src.id = $word OR tgt.id = $word
+                   OR src.article_name = $word OR tgt.article_name = $word
+                RETURN src.id AS source, tgt.id AS target,
+                       r.display AS display, r.section AS section,
+                       r.chunk_ids AS chunk_ids
+                """,
+                word=keyword_to_inspect,
+            )
+            refs = list(result)
+            if refs:
+                print(f"\nCross-article references involving '{keyword_to_inspect}':")
+                for ref in refs:
+                    c_ids = ref.get('chunk_ids', []) or []
+                    if isinstance(c_ids, str):
+                        c_ids = [c_ids]
+                    chunk_str = f" (from chunks: {', '.join(c_ids)})" if c_ids else ""
+                    section_str = f"#{ref['section']}" if ref.get('section') else ""
+                    print(f"  [{ref['source']}] → [{ref['target']}{section_str}]"
+                          f" display='{ref.get('display', '')}'{chunk_str}")
+                    # Show source text for link chunks
+                    for c_id in c_ids:
+                        if c_id:
+                            text = get_chunk_text(q_client, q_collection, c_id)
+                            indented = "\n".join(["      | " + line for line in text.split("\n")])
+                            print(f"    Source chunk ({c_id}):\n{indented}")
 
     driver.close()
 

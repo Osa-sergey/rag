@@ -102,6 +102,10 @@ class LLMKeywordRefiner:
         try:
             response = self._llm.invoke(prompt)
             content = response.content if hasattr(response, "content") else str(response)
+            logger.debug(
+                "Refiner raw LLM response (%d chars): %.500s",
+                len(content), content,
+            )
             items = self._parse_response(content)
             return items
         except Exception as exc:
@@ -122,29 +126,36 @@ class LLMKeywordRefiner:
         md_match = re.search(r"```(?:json)?\s*(.*?)\s*```", content, re.DOTALL)
         if md_match:
             content = md_match.group(1).strip()
+            logger.debug("Refiner: extracted JSON from markdown code block")
 
         # 3. Try direct parse
         parsed = self._try_parse_json(content)
         if parsed is not None:
-            return self._normalize_parsed(parsed)
+            result = self._normalize_parsed(parsed)
+            logger.debug("Refiner: strategy 3 (direct parse) -> %d items", len(result))
+            return result
 
         # 4. Try to find first [ ... ] in the text
         bracket_match = re.search(r"\[.*\]", content, re.DOTALL)
         if bracket_match:
             parsed = self._try_parse_json(bracket_match.group(0))
             if parsed is not None:
-                return self._normalize_parsed(parsed)
+                result = self._normalize_parsed(parsed)
+                logger.debug("Refiner: strategy 4 (bracket extract) -> %d items", len(result))
+                return result
 
         # 5. Try to find first { ... } and wrap in array
         brace_match = re.search(r"\{.*\}", content, re.DOTALL)
         if brace_match:
             parsed = self._try_parse_json("[" + brace_match.group(0) + "]")
             if parsed is not None:
-                return self._normalize_parsed(parsed)
+                result = self._normalize_parsed(parsed)
+                logger.debug("Refiner: strategy 5 (brace wrap) -> %d items", len(result))
+                return result
 
         logger.warning(
-            "Refiner: could not parse response (%d chars). First 200: %s",
-            len(content), content[:200],
+            "Refiner: could not parse response (%d chars). First 500: %s",
+            len(content), content[:500],
         )
         return []
 
@@ -167,11 +178,13 @@ class LLMKeywordRefiner:
         if isinstance(parsed, list):
             items = parsed
         elif isinstance(parsed, dict):
-            # Could be {"items": [...]} or {"keywords": [...]}
+            # Could be {"items": [...]} or {"keywords": [...]} etc.
             items = (
                 parsed.get("items")
                 or parsed.get("keywords")
+                or parsed.get("refined_keywords")
                 or parsed.get("results")
+                or parsed.get("data")
                 or [parsed]
             )
         else:

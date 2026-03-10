@@ -38,6 +38,7 @@ class ExtractedLink:
     target: str                # file/article name (without section)
     section: str = ""          # #section if present
     link_type: str = "obsidian"  # "obsidian" | "markdown" | "url"
+    source_chunk_ids: list[str] = field(default_factory=list)
 
     @property
     def target_article_id(self) -> str:

@@ -176,6 +176,9 @@ class RaptorPipeline:
 
         for node in nodes:
             node_links = extract_links_from_text(node.text)
+            # Tag each link with its source chunk
+            for lnk in node_links:
+                lnk.source_chunk_ids.append(node.node_id)
             all_article_links.extend(node_links)
             link_kws = []
             for lnk in node_links:
@@ -190,14 +193,20 @@ class RaptorPipeline:
                     ))
             link_keywords_by_node[node.node_id] = link_kws
 
-        # Deduplicate article-level links
-        seen_link_targets: set[str] = set()
+        # Deduplicate article-level links, merging source_chunk_ids
+        seen_link_targets: dict[str, ExtractedLink] = {}
         unique_links: list[ExtractedLink] = []
         for lnk in all_article_links:
             key = f"{lnk.target_article_id}#{lnk.section}"
             if key not in seen_link_targets:
-                seen_link_targets.add(key)
+                seen_link_targets[key] = lnk
                 unique_links.append(lnk)
+            else:
+                # Merge source chunk IDs into existing link
+                existing = seen_link_targets[key]
+                for cid in lnk.source_chunk_ids:
+                    if cid not in existing.source_chunk_ids:
+                        existing.source_chunk_ids.append(cid)
 
         if unique_links:
             logger.info("  + Extracted %d unique links from text", len(unique_links))
@@ -389,17 +398,46 @@ class RaptorPipeline:
 
         root_nodes = [n for n in nodes if n.node_id not in all_children_ids]
         # Separate: roots that are summaries vs orphan leaves
-        summary_texts = [n.text for n in root_nodes if n.level > 0]
-        orphan_leaves = [n.text for n in root_nodes if n.level == 0]
+        summary_root_nodes = [n for n in root_nodes if n.level > 0]
+        orphan_leaf_nodes = [n for n in root_nodes if n.level == 0]
+        summary_texts = [n.text for n in summary_root_nodes]
+        orphan_leaves = [n.text for n in orphan_leaf_nodes]
 
         all_summary_parts = summary_texts + orphan_leaves
+
+        # Detailed logging: breakdown by type and level
+        if summary_root_nodes or orphan_leaf_nodes:
+            level_counts: dict[int, int] = {}
+            for n in summary_root_nodes:
+                level_counts[n.level] = level_counts.get(n.level, 0) + 1
+            level_str = ", ".join(
+                f"L{lv}: {cnt}" for lv, cnt in sorted(level_counts.items())
+            )
+            logger.info(
+                "  + Article summary sources: %d total — "
+                "%d summary nodes (%s) + %d orphan leaf chunks",
+                len(all_summary_parts),
+                len(summary_root_nodes),
+                level_str if level_str else "none",
+                len(orphan_leaf_nodes),
+            )
+            for n in summary_root_nodes:
+                logger.info(
+                    "    📝 [summary L%d] %s (%d chars, %d children)",
+                    n.level, n.node_id, len(n.text), len(n.children_ids),
+                )
+            for n in orphan_leaf_nodes:
+                logger.info(
+                    "    📄 [orphan leaf] %s (%d chars)",
+                    n.node_id, len(n.text),
+                )
 
         if len(all_summary_parts) == 1:
             article_summary = all_summary_parts[0]
         elif all_summary_parts:
             logger.info(
-                "  + Building article summary from %d root summaries + %d orphan leaves",
-                len(summary_texts), len(orphan_leaves),
+                "  + Summarizing %d sources into final article summary...",
+                len(all_summary_parts),
             )
             article_summary = self._summarizer.summarize(all_summary_parts)
         else:
@@ -440,6 +478,7 @@ class RaptorPipeline:
                     "target": lnk.target,
                     "section": lnk.section,
                     "display": lnk.display,
+                    "source_chunk_ids": lnk.source_chunk_ids,
                 }
                 for lnk in unique_links
             ],

@@ -92,6 +92,7 @@ class Neo4jGraphStore:
             for link in links:
                 if link.link_type != "obsidian" or not link.target:
                     continue
+                chunk_ids = link.source_chunk_ids if hasattr(link, 'source_chunk_ids') else []
                 session.run(
                     """
                     MERGE (src:Article {id: $source_id})
@@ -102,6 +103,11 @@ class Neo4jGraphStore:
                         r.display = $display,
                         r.version = $version,
                         r.raw = $raw
+                    WITH r, $chunk_ids AS new_chunks
+                    SET r.chunk_ids = CASE
+                        WHEN r.chunk_ids IS NULL THEN new_chunks
+                        ELSE [x IN (r.chunk_ids + new_chunks) WHERE x IS NOT NULL | x]
+                    END
                     """,
                     source_id=source_article_id,
                     target_name=link.target_article_id,
@@ -109,6 +115,7 @@ class Neo4jGraphStore:
                     display=link.display,
                     version=version,
                     raw=link.raw,
+                    chunk_ids=chunk_ids,
                 )
 
     # ------------------------------------------------------------------

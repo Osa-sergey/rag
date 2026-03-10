@@ -117,5 +117,42 @@ def main(cfg: DictConfig) -> None:
     if not show_full_text:
         print("\nTip: Use 'full_text=true' (or '+full_text=true' if not in config) to see complete content.")
 
+    # ── Show article summary from Neo4j ───────────────────────
+    try:
+        from neo4j import GraphDatabase
+        n_cfg = cfg.stores.neo4j
+        driver = GraphDatabase.driver(n_cfg.uri, auth=(n_cfg.user, n_cfg.password))
+        
+        # Determine which article_ids are present
+        article_ids_in_tree = set()
+        for node in nodes_map.values():
+            aid = node.get("article_id", "")
+            if aid:
+                article_ids_in_tree.add(aid)
+        
+        if article_id:
+            article_ids_in_tree = {article_id}
+        
+        with driver.session(database=n_cfg.database) as session:
+            for aid in sorted(article_ids_in_tree):
+                result = session.run(
+                    "MATCH (a:Article {id: $id}) RETURN a.summary AS summary, a.article_name AS name",
+                    id=aid,
+                )
+                record = result.single()
+                if record and record["summary"]:
+                    name = record.get("name") or aid
+                    print(f"\n{'═' * 60}")
+                    print(f"📋 ОБЩЕЕ САММАРИ СТАТЬИ: {name}")
+                    print(f"{'═' * 60}")
+                    print(record["summary"])
+                    print(f"{'═' * 60}")
+                else:
+                    print(f"\n(Саммари для '{aid}' не найдено в Neo4j)")
+        
+        driver.close()
+    except Exception as exc:
+        print(f"\n(Не удалось загрузить саммари из Neo4j: {exc})")
+
 if __name__ == "__main__":
     main()
