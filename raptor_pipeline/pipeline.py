@@ -203,15 +203,26 @@ class RaptorPipeline:
         # the extractor output and the refiner's `original_words`.
         raw_to_refined: dict[str, dict] = {}
         all_refined_keywords: list[Keyword] = []
+        # Track which raw keywords were merged into each refined keyword
+        refined_originals: dict[str, list[str]] = {}  # refined_word -> [raw words]
 
         for item in refined_list:
             refined_word = item.get("refined_word", "").strip()
             category = item.get("category", "other")
             if not refined_word:
                 continue
-            for orig in item.get("original_words", []):
+            orig_words = item.get("original_words", [])
+            for orig in orig_words:
                 key = orig.strip().lower()
                 raw_to_refined[key] = {"word": refined_word, "category": category}
+            # Accumulate all originals for this refined word
+            rw_key = refined_word.lower()
+            if rw_key not in refined_originals:
+                refined_originals[rw_key] = []
+            for o in orig_words:
+                o_stripped = o.strip()
+                if o_stripped and o_stripped not in refined_originals[rw_key]:
+                    refined_originals[rw_key].append(o_stripped)
 
         logger.info(
             "  + Refiner produced %d items, raw_to_refined map has %d entries",
@@ -245,11 +256,14 @@ class RaptorPipeline:
 
                 if word not in node_kw_words:
                     node_kw_words.add(word)
+                    # Lookup which raw words were merged into this refined word
+                    originals = refined_originals.get(word.lower(), [])
                     refined_obj = Keyword(
                         word=word,
                         category=category,
                         confidence=raw_kw.confidence,
                         chunk_id=node.node_id,
+                        original_words=originals if originals else None,
                     )
                     node_refined_kws.append(refined_obj)
                     all_refined_keywords.append(refined_obj)

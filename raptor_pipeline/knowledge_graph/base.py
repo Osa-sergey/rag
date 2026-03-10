@@ -46,16 +46,18 @@ class Keyword:
     """Extracted keyword or key-phrase.
 
     Attributes:
-        word:       The keyword text.
-        category:   Optional category (e.g. "technology", "concept").
-        confidence: Extraction confidence 0–1.
-        chunk_id:   ID of the source chunk.
+        word:           The keyword text (refined form).
+        category:       Optional category (e.g. "technology", "concept").
+        confidence:     Extraction confidence 0–1.
+        chunk_id:       ID of the source chunk.
+        original_words: Raw keywords that were merged into this one by the refiner.
     """
 
     word: str
     category: str = ""
     confidence: float = 1.0
     chunk_id: str = ""
+    original_words: list[str] | None = None
 
 
 @dataclass

@@ -45,21 +45,40 @@ def main(cfg: DictConfig) -> None:
             # Mode A: List keywords
             print("\nAvailable Keywords in Neo4j:")
             print("=" * 60)
-            result = session.run("MATCH (k:Keyword) RETURN k.word AS word, k.category AS category ORDER BY word")
+            result = session.run(
+                "MATCH (k:Keyword) RETURN k.word AS word, k.category AS category, "
+                "k.original_words AS original_words ORDER BY word"
+            )
             keywords = list(result)
             if not keywords:
                 print("No keywords found in Neo4j.")
             for kw in keywords:
-                print(f"- {kw['word']} ({kw['category']})")
+                orig = kw.get('original_words') or []
+                orig_str = f"  ← merged: [{', '.join(orig)}]" if orig else ""
+                print(f"- {kw['word']} ({kw['category']}){orig_str}")
             print("=" * 60)
+            print(f"Total: {len(keywords)} keywords")
             print("\nTip: Run with 'word=\"YOUR_KEYWORD\"' to see relationships and source text.")
         
         else:
             # Mode B: Inspect specific keyword
             print(f"\nInspecting Keyword: '{keyword_to_inspect}'")
             print("=" * 60)
-            
-            # 1. Direct relationships
+
+            # 0. Show keyword info + original_words
+            kw_info = session.run(
+                "MATCH (k:Keyword {word: $word}) RETURN k.category AS category, k.original_words AS original_words",
+                word=keyword_to_inspect,
+            )
+            kw_record = kw_info.single()
+            if kw_record:
+                print(f"Category: {kw_record['category']}")
+                orig = kw_record.get('original_words') or []
+                if orig:
+                    print(f"Merged from: {orig}")
+                else:
+                    print("Merged from: (not a merged keyword)")
+            print()
             result = session.run(
                 """
                 MATCH (s:Keyword {word: $word})-[r:RELATED_TO]->(o:Keyword)

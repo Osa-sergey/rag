@@ -67,11 +67,16 @@ class Neo4jGraphStore:
         """Store keywords and link them to the article."""
         with self._driver.session(database=self._database) as session:
             for kw in keywords:
+                orig_words = kw.original_words or []
                 session.run(
                     """
                     MERGE (a:Article {id: $article_id})
                     MERGE (k:Keyword {word: $word})
                     SET k.category = $category
+                    SET k.original_words = CASE
+                        WHEN size($orig_words) > 0 THEN $orig_words
+                        ELSE coalesce(k.original_words, [])
+                    END
                     MERGE (a)-[r:HAS_KEYWORD]->(k)
                     ON CREATE SET r.confidence = $confidence,
                                   r.chunk_ids = [$chunk_id]
@@ -83,6 +88,7 @@ class Neo4jGraphStore:
                     category=kw.category,
                     confidence=kw.confidence,
                     chunk_id=kw.chunk_id,
+                    orig_words=orig_words,
                 )
 
     # ------------------------------------------------------------------
