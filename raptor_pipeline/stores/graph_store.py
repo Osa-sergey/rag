@@ -50,13 +50,14 @@ class Neo4jGraphStore:
         logger.info("Neo4j indexes ensured")
 
     # ------------------------------------------------------------------
-    def store_article(self, article_id: str, title: str = "") -> None:
+    def store_article(self, article_id: str, title: str = "", summary: str = "") -> None:
         """Create or merge an Article node."""
         with self._driver.session(database=self._database) as session:
             session.run(
-                "MERGE (a:Article {id: $id}) SET a.title = $title",
+                "MERGE (a:Article {id: $id}) SET a.title = $title, a.summary = $summary",
                 id=article_id,
                 title=title,
+                summary=summary,
             )
 
     # ------------------------------------------------------------------

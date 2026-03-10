@@ -74,6 +74,15 @@ class RaptorPipeline:
         self._vector_store = QdrantVectorStore(cfg.stores.qdrant)
         self._graph_store = Neo4jGraphStore(cfg.stores.neo4j)
 
+        # BERTopic (optional, runs across multiple articles)
+        self._use_bertopic: bool = cfg.get("use_bertopic", False)
+        self._bertopic_extractor = None
+        if self._use_bertopic:
+            from raptor_pipeline.knowledge_graph.bertopic_extractor import BERTopicKeywordExtractor
+            self._bertopic_extractor = BERTopicKeywordExtractor(
+                cfg.bertopic, self._embedder,
+            )
+
         # Parallelism & batching
         self._max_workers: int = cfg.get("max_concurrency", 8)
         self._batch_size: int = cfg.get("batch_size", 8)
@@ -295,12 +304,40 @@ class RaptorPipeline:
             len(all_relations),
         )
 
-        # ── Step 4: Store in Qdrant ───────────────────────────
+        # ── Step 4: Article summary from RAPTOR tree ──────────
+        # Collect root nodes (not a child of any other node).
+        # Also collect leaf nodes that no summary covers — these
+        # would be lost if we only looked at the top-level roots.
+        all_children_ids: set[str] = set()
+        for n in nodes:
+            all_children_ids.update(n.children_ids)
+
+        root_nodes = [n for n in nodes if n.node_id not in all_children_ids]
+        # Separate: roots that are summaries vs orphan leaves
+        summary_texts = [n.text for n in root_nodes if n.level > 0]
+        orphan_leaves = [n.text for n in root_nodes if n.level == 0]
+
+        all_summary_parts = summary_texts + orphan_leaves
+
+        if len(all_summary_parts) == 1:
+            article_summary = all_summary_parts[0]
+        elif all_summary_parts:
+            logger.info(
+                "  + Building article summary from %d root summaries + %d orphan leaves",
+                len(summary_texts), len(orphan_leaves),
+            )
+            article_summary = self._summarizer.summarize(all_summary_parts)
+        else:
+            article_summary = ""
+
+        logger.info("  + Article summary: %d chars", len(article_summary))
+
+        # ── Step 5: Store in Qdrant ───────────────────────────
         self._vector_store.upsert_nodes(nodes, keywords_by_node)
         logger.info("  + Stored %d nodes in Qdrant", len(nodes))
 
-        # ── Step 5: Store in Neo4j ────────────────────────────
-        self._graph_store.store_article(article_id)
+        # ── Step 6: Store in Neo4j ────────────────────────────
+        self._graph_store.store_article(article_id, summary=article_summary)
         self._graph_store.store_keywords(article_id, all_refined_keywords)
         self._graph_store.store_relations(article_id, all_relations)
         logger.info("  + Stored KG in Neo4j")
@@ -312,6 +349,7 @@ class RaptorPipeline:
             "keywords": len(all_refined_keywords),
             "unique_keywords": len(unique_kws),
             "relations": len(all_relations),
+            "article_summary": article_summary[:200] + "..." if len(article_summary) > 200 else article_summary,
         }
 
     # ------------------------------------------------------------------
@@ -327,7 +365,64 @@ class RaptorPipeline:
                 results.append(result)
             except Exception:
                 logger.exception("Failed to process %s", path.name)
+
+        # ── BERTopic: collection-level keyword extraction ─────
+        if self._use_bertopic and self._bertopic_extractor and results:
+            self._run_bertopic(input_dir, files, results)
+
         return results
+
+    # ------------------------------------------------------------------
+    def _run_bertopic(
+        self, input_dir: Path, files: list[Path], results: list[dict]
+    ) -> None:
+        """Run BERTopic on full article texts and store keywords."""
+        from document_parser.text_extractor import load_yaml, flatten_blocks, render_block
+        from raptor_pipeline.knowledge_graph.base import Keyword
+
+        logger.info("BERTopic: loading full article texts...")
+        article_texts: list[str] = []
+        article_ids: list[str] = []
+
+        for path in files:
+            try:
+                data = load_yaml(path)
+                article_id = data.get("article_id", path.stem)
+                document = data.get("document", [])
+                blocks = flatten_blocks(document)
+                full_text = "\n\n".join(
+                    render_block(b) for b in blocks
+                    if render_block(b).strip()
+                )
+                if full_text.strip():
+                    article_texts.append(full_text)
+                    article_ids.append(article_id)
+            except Exception:
+                logger.exception("BERTopic: failed to read %s", path.name)
+
+        if len(article_texts) < 3:
+            logger.warning(
+                "BERTopic: only %d articles with text, need at least 3. Skipping.",
+                len(article_texts),
+            )
+            return
+
+        bt_keywords, article_kw_map = self._bertopic_extractor.extract(
+            article_texts, article_ids,
+        )
+
+        # Store BERTopic keywords per article in Neo4j
+        for art_id, kw_words in article_kw_map.items():
+            kw_objects = [
+                Keyword(word=w, category="bertopic", confidence=0.8, chunk_id="bertopic")
+                for w in kw_words
+            ]
+            self._graph_store.store_keywords(art_id, kw_objects)
+
+        logger.info(
+            "BERTopic: stored %d collection-level keywords across %d articles",
+            len(bt_keywords), len(article_kw_map),
+        )
 
     # ------------------------------------------------------------------
     def close(self) -> None:

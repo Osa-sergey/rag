@@ -11,7 +11,7 @@ model_name: BAAI/bge-small-en-v1.5
 
 # Где вычислять (cpu или cuda)
 model_kwargs:
-  device: cpu
+  device: mps
 
 encode_kwargs:
   normalize_embeddings: true

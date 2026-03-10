@@ -20,7 +20,7 @@ format: json
 max_tokens: 2048
 
 # Максимальное число ключевых слов на чанк.
-max_keywords: 15
+max_keywords: 5
 
 # Максимальное число связей (триплетов) на чанк.
 max_relations: 20
