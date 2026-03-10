@@ -19,7 +19,7 @@ defaults:
   - prompts@prompts.keywords: keywords
   - prompts@prompts.refine_keywords: refine_keywords
   - prompts@prompts.relations: relations
-  - bertopic: bertopic
+  - optional bertopic
   - _self_
 
 # ── Глобальные параметры ──────────────────────────────────────
