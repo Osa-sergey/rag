@@ -1,12 +1,17 @@
-"""Neo4j graph store for keywords, relations, and article metadata."""
+"""Neo4j graph store for articles, keywords, relations, topics, and metadata.
+
+Shared module — used by both raptor_pipeline and topic_modeler.
+"""
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from neo4j import GraphDatabase
 from omegaconf import DictConfig
 
-from raptor_pipeline.knowledge_graph.base import Keyword, Relation
+if TYPE_CHECKING:
+    from raptor_pipeline.knowledge_graph.base import Keyword, Relation
 
 logger = logging.getLogger(__name__)
 
@@ -15,10 +20,13 @@ class Neo4jGraphStore:
     """Neo4j integration — stores knowledge graph.
 
     Graph schema:
-      (:Article {id, title})
+      (:Article {id, title, author, reading_time, complexity, labels, tags, hubs})
       (:Keyword {word, category})
+      (:Topic   {id, label, top_keywords})
       (:Article)-[:HAS_KEYWORD {confidence, chunk_id}]->(:Keyword)
       (:Keyword)-[:RELATED_TO {predicate, confidence, chunk_id}]->(:Keyword)
+      (:Article)-[:BELONGS_TO_TOPIC {confidence}]->(:Topic)
+      (:Article)-[:REFERENCES]->(:Article)
     """
 
     def __init__(self, cfg: DictConfig) -> None:
@@ -43,12 +51,15 @@ class Neo4jGraphStore:
         queries = [
             "CREATE INDEX IF NOT EXISTS FOR (a:Article) ON (a.id)",
             "CREATE INDEX IF NOT EXISTS FOR (k:Keyword) ON (k.word)",
+            "CREATE INDEX IF NOT EXISTS FOR (t:Topic) ON (t.id)",
         ]
         with self._driver.session(database=self._database) as session:
             for q in queries:
                 session.run(q)
         logger.info("Neo4j indexes ensured")
 
+    # ------------------------------------------------------------------
+    # Article CRUD
     # ------------------------------------------------------------------
     def store_article(
         self,
@@ -75,6 +86,47 @@ class Neo4jGraphStore:
                 version=version,
             )
 
+    # ------------------------------------------------------------------
+    def store_article_metadata(
+        self,
+        article_id: str,
+        metadata: dict,
+    ) -> None:
+        """Upsert article metadata (author, tags, hubs, complexity, etc.).
+
+        Only sets fields that are present in *metadata* dict; existing
+        properties not in the dict are left untouched.
+
+        Supported keys: author, reading_time, complexity, labels, tags, hubs.
+        """
+        set_clauses = []
+        params: dict = {"id": article_id}
+
+        field_map = {
+            "author": "a.author",
+            "reading_time": "a.reading_time",
+            "complexity": "a.complexity",
+            "labels": "a.labels",
+            "tags": "a.tags",
+            "hubs": "a.hubs",
+        }
+        for key, prop in field_map.items():
+            if key in metadata and metadata[key] is not None:
+                set_clauses.append(f"{prop} = ${key}")
+                params[key] = metadata[key]
+
+        if not set_clauses:
+            return
+
+        query = f"""
+        MERGE (a:Article {{id: $id}})
+        SET {', '.join(set_clauses)}
+        """
+        with self._driver.session(database=self._database) as session:
+            session.run(query, **params)
+
+    # ------------------------------------------------------------------
+    # Cross-article links
     # ------------------------------------------------------------------
     def store_links(
         self,
@@ -137,6 +189,8 @@ class Neo4jGraphStore:
                 )
 
     # ------------------------------------------------------------------
+    # Keywords
+    # ------------------------------------------------------------------
     def store_keywords(
         self, article_id: str, keywords: list[Keyword]
     ) -> None:
@@ -168,6 +222,8 @@ class Neo4jGraphStore:
                 )
 
     # ------------------------------------------------------------------
+    # Relations
+    # ------------------------------------------------------------------
     def store_relations(
         self, article_id: str, relations: list[Relation]
     ) -> None:
@@ -193,6 +249,50 @@ class Neo4jGraphStore:
                     article_id=article_id,
                 )
 
+    # ------------------------------------------------------------------
+    # Topics (BERTopic)
+    # ------------------------------------------------------------------
+    def store_topic(
+        self,
+        topic_id: int,
+        label: str,
+        top_keywords: list[str],
+    ) -> None:
+        """Create or update a Topic node."""
+        with self._driver.session(database=self._database) as session:
+            session.run(
+                """
+                MERGE (t:Topic {id: $id})
+                SET t.label = $label,
+                    t.top_keywords = $top_keywords
+                """,
+                id=topic_id,
+                label=label,
+                top_keywords=top_keywords,
+            )
+
+    def link_article_to_topic(
+        self,
+        article_id: str,
+        topic_id: int,
+        confidence: float = 1.0,
+    ) -> None:
+        """Create BELONGS_TO_TOPIC relationship between Article and Topic."""
+        with self._driver.session(database=self._database) as session:
+            session.run(
+                """
+                MERGE (a:Article {id: $article_id})
+                MERGE (t:Topic {id: $topic_id})
+                MERGE (a)-[r:BELONGS_TO_TOPIC]->(t)
+                SET r.confidence = $confidence
+                """,
+                article_id=article_id,
+                topic_id=topic_id,
+                confidence=confidence,
+            )
+
+    # ------------------------------------------------------------------
+    # Queries
     # ------------------------------------------------------------------
     def get_article_keywords(self, article_id: str) -> list[dict]:
         """Retrieve all keywords for an article."""

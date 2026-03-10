@@ -1,0 +1,74 @@
+# Topic Modeler — Hydra configuration
+# ═══════════════════════════════════
+
+# ── Mode ──────────────────────────
+# train         — fit BERTopic on all articles
+# add_article   — predict topic for a new article
+mode: train
+
+# ── Paths ─────────────────────────
+input_dir: parsed_yaml
+article_path: null   # only for mode=add_article
+model_dir: outputs/bertopic_model
+
+csv_paths:
+  - data/row_data/scrapped_articles.csv
+  - data/row_data/scrapped_articles_1.csv
+  - data/row_data/scrapped_articles_2.csv
+
+# ── UMAP ──────────────────────────
+umap:
+  n_neighbors: 15
+  n_components: 5
+  min_dist: 0.1
+  metric: cosine
+
+# ── HDBSCAN ───────────────────────
+hdbscan:
+  min_cluster_size: 5
+  min_samples: 1
+  metric: euclidean
+  cluster_selection_method: eom
+
+# ── CountVectorizer ───────────────
+vectorizer:
+  min_df: 2
+  ngram_range: [1, 2]
+  stop_words: null
+
+# ── BERTopic ──────────────────────
+bertopic:
+  language: russian
+  top_n_words: 15
+  min_topic_size: 3
+  nr_topics: null      # null = auto
+
+# ── Representation models ─────────
+representation:
+  use_keybert: true
+  keybert:
+    top_n_words: 10
+  use_mmr: true
+  mmr:
+    diversity: 0.3
+
+# ── Shared configs ────────────────
+defaults:
+  - _self_
+
+embeddings:
+  provider: huggingface
+  model_name: sergeyzh/BERTA
+  local_path: D:/models/BERTA
+  model_kwargs:
+    device: cuda
+  encode_kwargs:
+    normalize_embeddings: true
+  embedding_dim: 768
+
+stores:
+  neo4j:
+    uri: bolt://localhost:7687
+    user: neo4j
+    password: raptor_password
+    database: neo4j

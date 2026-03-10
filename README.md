@@ -82,7 +82,32 @@ python -m raptor_pipeline.inspect_graph word=оптимизация
 python -m raptor_pipeline.reset_stores
 ```
 
+## 📊 Topic Modeler — кросс-статейное тематическое моделирование
+
+Отдельная утилита для обнаружения тем (BERTopic) и обогащения Article-нод метаданными.
+
+### Обучение на всех статьях
+```powershell
+python -m topic_modeler mode=train
+```
+Загружает тексты из `parsed_yaml/`, метаданные из `data/row_data/scrapped_articles*.csv`,
+обучает BERTopic, создаёт `:Topic` ноды и `[:BELONGS_TO_TOPIC]` связи в Neo4j.
+
+### Добавить одну статью (инференс)
+```powershell
+python -m topic_modeler mode=add_article article_path=parsed_yaml/957000_20260204_130209.yaml
+```
+
+### Конфигурация
+Каждый суб-компонент BERTopic настраивается через `topic_modeler/conf/config.yaml`:
+- **UMAP**: `n_neighbors`, `n_components`, `min_dist`, `metric`
+- **HDBSCAN**: `min_cluster_size`, `min_samples`, `metric`
+- **Vectorizer**: `min_df`, `ngram_range`, `stop_words`
+- **Representation**: KeyBERT, MMR (вкл/выкл + параметры)
+
 ## 🛠 Архитектура проекта
+- `stores/`: Общий модуль хранения (Neo4j `graph_store`) — используется обоими пайплайнами.
+- `topic_modeler/`: Standalone BERTopic утилита (train / add_article).
 - `raptor_pipeline/chunker/`: Гибридный чанкер (Paragraph-aware + Semantic).
 - `raptor_pipeline/knowledge_graph/`: Логика экстракции и **Refiner** (дедупликация).
 - `raptor_pipeline/raptor/`: Рекурсивная кластеризация и суммаризация.

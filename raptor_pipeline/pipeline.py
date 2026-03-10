@@ -17,8 +17,8 @@ from raptor_pipeline.knowledge_graph.keyword_extractor import LLMKeywordExtracto
 from raptor_pipeline.knowledge_graph.keyword_refiner import LLMKeywordRefiner
 from raptor_pipeline.knowledge_graph.relation_extractor import LLMRelationExtractor
 from raptor_pipeline.raptor.tree_builder import RaptorNode, RaptorTreeBuilder
-from raptor_pipeline.stores.graph_store import Neo4jGraphStore
-from raptor_pipeline.stores.vector_store import QdrantVectorStore
+from stores.graph_store import Neo4jGraphStore
+from stores.vector_store import QdrantVectorStore
 from raptor_pipeline.summarizer.llm_summarizer import LLMSummarizer
 from raptor_pipeline.knowledge_graph.link_parser import (
     extract_links_from_text,
@@ -79,14 +79,6 @@ class RaptorPipeline:
         self._vector_store = QdrantVectorStore(cfg.stores.qdrant)
         self._graph_store = Neo4jGraphStore(cfg.stores.neo4j)
 
-        # BERTopic (optional, runs across multiple articles)
-        self._use_bertopic: bool = cfg.get("use_bertopic", False)
-        self._bertopic_extractor = None
-        if self._use_bertopic:
-            from raptor_pipeline.knowledge_graph.bertopic_extractor import BERTopicKeywordExtractor
-            self._bertopic_extractor = BERTopicKeywordExtractor(
-                cfg.bertopic, self._embedder,
-            )
 
         # Parallelism & batching
         self._max_workers: int = cfg.get("max_concurrency", 8)
@@ -499,63 +491,10 @@ class RaptorPipeline:
             except Exception:
                 logger.exception("Failed to process %s", path.name)
 
-        # ── BERTopic: collection-level keyword extraction ─────
-        if self._use_bertopic and self._bertopic_extractor and results:
-            self._run_bertopic(input_dir, files, results)
 
         return results
 
-    # ------------------------------------------------------------------
-    def _run_bertopic(
-        self, input_dir: Path, files: list[Path], results: list[dict]
-    ) -> None:
-        """Run BERTopic on full article texts and store keywords."""
-        from document_parser.text_extractor import load_yaml, flatten_blocks, render_block
-        from raptor_pipeline.knowledge_graph.base import Keyword
 
-        logger.info("BERTopic: loading full article texts...")
-        article_texts: list[str] = []
-        article_ids: list[str] = []
-
-        for path in files:
-            try:
-                data = load_yaml(path)
-                article_id = data.get("article_id", path.stem)
-                document = data.get("document", [])
-                blocks = flatten_blocks(document)
-                full_text = "\n\n".join(
-                    render_block(b) for b in blocks
-                    if render_block(b).strip()
-                )
-                if full_text.strip():
-                    article_texts.append(full_text)
-                    article_ids.append(article_id)
-            except Exception:
-                logger.exception("BERTopic: failed to read %s", path.name)
-
-        if len(article_texts) < 3:
-            logger.warning(
-                "BERTopic: only %d articles with text, need at least 3. Skipping.",
-                len(article_texts),
-            )
-            return
-
-        bt_keywords, article_kw_map = self._bertopic_extractor.extract(
-            article_texts, article_ids,
-        )
-
-        # Store BERTopic keywords per article in Neo4j
-        for art_id, kw_words in article_kw_map.items():
-            kw_objects = [
-                Keyword(word=w, category="bertopic", confidence=0.8, chunk_id="bertopic")
-                for w in kw_words
-            ]
-            self._graph_store.store_keywords(art_id, kw_objects)
-
-        logger.info(
-            "BERTopic: stored %d collection-level keywords across %d articles",
-            len(bt_keywords), len(article_kw_map),
-        )
 
     # ------------------------------------------------------------------
     def close(self) -> None:
