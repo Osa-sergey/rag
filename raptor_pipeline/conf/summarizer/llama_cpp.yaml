@@ -14,4 +14,4 @@ base_url: http://localhost:8080/v1
 temperature: 0.3
 
 # Максимальное количество токенов в ответе.
-max_tokens: 1024
+max_tokens: 2048

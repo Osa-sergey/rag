@@ -10,9 +10,9 @@
 defaults:
   - chunker: hybrid
   - embeddings: huggingface
-  - summarizer: ollama
+  - summarizer: llama_cpp
   - raptor: default
-  - knowledge_graph: ollama
+  - knowledge_graph: llama_cpp 
   - stores@stores.qdrant: qdrant
   - stores@stores.neo4j: neo4j
   - prompts@prompts.summarize: summarize
@@ -38,14 +38,14 @@ bertopic:
   min_topic_size: 3
 
 # Уровень логирования (DEBUG / INFO / WARNING / ERROR)
-log_level: INFO
+log_level: DEBUG
 
 # Максимальное количество параллельных запросов к LLM
-max_concurrency: 8
+max_concurrency: 2
 
 # Размер батча — сколько запросов отправляется одновременно,
 # следующий батч стартует после завершения текущего.
-batch_size: 8
+batch_size: 16
 
 # Показывать ли полный текст при выводе структуры дерева (используется утилитами)
 full_text: false

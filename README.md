@@ -143,7 +143,7 @@ D:\tools\llama.cpp\llama-server.exe `
     --port 8080 `
     -ngl 99 `
     --parallel 8 `
-    -c 32768 `
+    -c 2048 `
     --cont-batching
 
 # Пояснение флагов:
@@ -151,7 +151,7 @@ D:\tools\llama.cpp\llama-server.exe `
 #   --port 8080     порт API (по умолчанию 8080)
 #   -ngl 99         выгрузить все слои на GPU
 #   --parallel 8    количество параллельных слотов (= max_concurrency пайплайна)
-#   -c 32768        размер контекста (все слоты делят между собой)
+#   -c 2048        размер контекста (все слоты делят между собой)
 #   --cont-batching включить continuous batching
 ```
 

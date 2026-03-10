@@ -167,7 +167,7 @@ class RaptorPipeline:
         # ── Step 3: Knowledge graph extraction (Hierarchical) ──
         logger.info("  + Extracting Knowledge Graph from %d nodes...", len(nodes))
 
-        max_text_chars: int = self.cfg.get("max_text_chars", 3000)
+        max_text_chars: int = self.cfg.get("max_text_chars", 2000)
 
         # 3.0: Extract links from all nodes BEFORE keyword extraction.
         # Link display texts become protected keywords (not refiner-editable).
