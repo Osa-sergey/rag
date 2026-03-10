@@ -45,9 +45,10 @@ class ExtractedLink:
         """Normalized target for matching against article IDs.
 
         Obsidian guarantees unique names within a vault,
-        so we match by name only (case-insensitive).
+        so we match by name only.  Case is preserved here;
+        case-insensitive comparison is done at the query layer.
         """
-        return self.target.strip().lower()
+        return self.target.strip()
 
 
 def parse_obsidian_link(raw_content: str) -> ExtractedLink:

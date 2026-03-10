@@ -93,11 +93,28 @@ class Neo4jGraphStore:
                 if link.link_type != "obsidian" or not link.target:
                     continue
                 chunk_ids = link.source_chunk_ids if hasattr(link, 'source_chunk_ids') else []
+                target_name = link.target_article_id
+
+                # Case-insensitive lookup for existing article
+                # to avoid creating duplicates with different casing.
+                existing = session.run(
+                    """
+                    MATCH (a:Article)
+                    WHERE toLower(a.article_name) = toLower($name)
+                       OR toLower(a.id) = toLower($name)
+                    RETURN a.id AS id
+                    LIMIT 1
+                    """,
+                    name=target_name,
+                ).single()
+
+                target_id = existing["id"] if existing else target_name
+
                 session.run(
                     """
                     MERGE (src:Article {id: $source_id})
-                    MERGE (tgt:Article {article_name: $target_name})
-                    ON CREATE SET tgt.id = $target_name
+                    MERGE (tgt:Article {id: $target_id})
+                    ON CREATE SET tgt.article_name = $target_name
                     MERGE (src)-[r:REFERENCES]->(tgt)
                     SET r.section = $section,
                         r.display = $display,
@@ -110,7 +127,8 @@ class Neo4jGraphStore:
                     END
                     """,
                     source_id=source_article_id,
-                    target_name=link.target_article_id,
+                    target_id=target_id,
+                    target_name=target_name,
                     section=link.section,
                     display=link.display,
                     version=version,

@@ -197,7 +197,7 @@ class RaptorPipeline:
         seen_link_targets: dict[str, ExtractedLink] = {}
         unique_links: list[ExtractedLink] = []
         for lnk in all_article_links:
-            key = f"{lnk.target_article_id}#{lnk.section}"
+            key = f"{lnk.target_article_id.lower()}#{lnk.section}"
             if key not in seen_link_targets:
                 seen_link_targets[key] = lnk
                 unique_links.append(lnk)
