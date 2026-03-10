@@ -1,48 +1,37 @@
 import json
 import logging
+import re
 from omegaconf import DictConfig
-import logging
 
-from raptor_pipeline.knowledge_graph.base import RefinedKeywordListSO
 from raptor_pipeline.summarizer.llm_summarizer import _build_llm
 
 logger = logging.getLogger(__name__)
 
 
 class LLMKeywordRefiner:
-    """Refine a list of keywords to merge synonyms and fix categories using Structured Output."""
+    """Refine keywords: merge synonyms, fix categories.
+
+    Uses a single raw LLM call (no structured output) with robust
+    multi-strategy JSON parsing for maximum compatibility with
+    different models (gemma3, qwen3, etc.).
+    """
 
     def __init__(self, cfg: DictConfig, prompt_cfg: DictConfig) -> None:
         self._llm = _build_llm(cfg)
-        self._structured_llm = self._llm.with_structured_output(RefinedKeywordListSO)
-        
         self._template: str = prompt_cfg.get(
             "template",
-            "У тебя есть сырой список ключевых слов. Объедини синонимы и исправь категории.\nСырые слова: {raw_keywords}"
+            "У тебя есть сырой список ключевых слов. Объедини синонимы и исправь категории.\nСырые слова: {raw_keywords}",
         )
-        logger.info("LLMKeywordRefiner ready (SO enabled)")
+        logger.info("LLMKeywordRefiner ready")
 
-    def _clean_json_text(self, text: str) -> str:
-        """Strip markdown code blocks and reasoning tags."""
-        import re
-        text = text.strip()
-        # Remove reasoning/thinking tags
-        text = re.sub(r'<(thought|think)>.*?</\1>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        # Remove markdown code blocks
-        if "```" in text:
-            match = re.search(r'```(?:json)?\s*(.*?)\s*```', text, re.DOTALL | re.IGNORECASE)
-            if match:
-                text = match.group(1)
-            else:
-                text = text.replace("```json", "").replace("```", "")
-        return text.strip()
+    # ── Public API ────────────────────────────────────────────
 
     def refine(self, raw_keywords: list[dict[str, str]]) -> list[dict]:
         if not raw_keywords:
             return []
 
-        # Deduplicate the input list to reduce prompt size
-        unique_raw = {}
+        # Deduplicate
+        unique_raw: dict[str, str] = {}
         for kw in raw_keywords:
             word = kw["word"]
             if word not in unique_raw:
@@ -52,24 +41,24 @@ class LLMKeywordRefiner:
         max_batch = 50
         total_batches = (len(unique_items) + max_batch - 1) // max_batch
 
-        # ── Pass 1: Refine each batch independently ──────────
+        # ── Pass 1: Refine each batch ────────────────────────
         pass1_results: list[dict] = []
         for i in range(0, len(unique_items), max_batch):
             batch = unique_items[i : i + max_batch]
+            batch_num = i // max_batch + 1
             logger.info(
                 "  Refiner pass 1 — batch %d/%d (%d keywords)...",
-                i // max_batch + 1, total_batches, len(batch),
+                batch_num, total_batches, len(batch),
             )
             batch_result = self._refine_batch(batch)
+            logger.info("    -> got %d refined items", len(batch_result))
             pass1_results.extend(batch_result)
 
         if not pass1_results:
             return []
 
         # ── Pass 2: Cross-batch dedup ────────────────────────
-        # Collect all refined words from pass 1 and run a final
-        # merge so that synonyms from different batches get unified.
-        refined_words = {}
+        refined_words: dict[str, str] = {}
         for item in pass1_results:
             w = item.get("refined_word", "").strip()
             if w:
@@ -77,44 +66,151 @@ class LLMKeywordRefiner:
                 if key not in refined_words:
                     refined_words[key] = item.get("category", "other")
 
-        # Only run pass 2 if there are enough words to potentially merge
         if len(refined_words) <= max_batch:
-            # Small enough — do one final dedup pass
             logger.info(
                 "  Refiner pass 2 — cross-batch dedup (%d refined words)...",
                 len(refined_words),
             )
-            pass2_items = list(refined_words.items())
-            pass2_results = self._refine_batch(pass2_items)
-
+            pass2_results = self._refine_batch(list(refined_words.items()))
             if pass2_results:
                 return self._merge_passes(pass1_results, pass2_results)
         else:
-            # Too many — run pass 2 in batches too, but with larger batch
             pass2_items = list(refined_words.items())
             large_batch = 100
-            pass2_results: list[dict] = []
+            pass2_results_all: list[dict] = []
             total_p2 = (len(pass2_items) + large_batch - 1) // large_batch
             for i in range(0, len(pass2_items), large_batch):
                 batch = pass2_items[i : i + large_batch]
                 logger.info(
-                    "  Refiner pass 2 — batch %d/%d (%d refined words)...",
+                    "  Refiner pass 2 — batch %d/%d (%d words)...",
                     i // large_batch + 1, total_p2, len(batch),
                 )
                 batch_result = self._refine_batch(batch)
-                pass2_results.extend(batch_result)
-
-            if pass2_results:
-                return self._merge_passes(pass1_results, pass2_results)
+                pass2_results_all.extend(batch_result)
+            if pass2_results_all:
+                return self._merge_passes(pass1_results, pass2_results_all)
 
         return pass1_results
+
+    # ── Internals ─────────────────────────────────────────────
+
+    def _refine_batch(self, batch: list[tuple[str, str]]) -> list[dict]:
+        """Refine a single batch — one LLM call, robust parsing."""
+        raw_text_list = "\n".join([f"- {w} ({c})" for w, c in batch])
+        prompt = self._template.replace("{raw_keywords}", raw_text_list)
+
+        try:
+            response = self._llm.invoke(prompt)
+            content = response.content if hasattr(response, "content") else str(response)
+            items = self._parse_response(content)
+            return items
+        except Exception as exc:
+            logger.warning("Refiner batch failed: %s", exc)
+            return []
+
+    def _parse_response(self, content: str) -> list[dict]:
+        """Multi-strategy JSON extraction from LLM response."""
+        content = content.strip()
+
+        # 1. Strip thinking/reasoning tags
+        content = re.sub(
+            r"<(thought|think|reasoning)>.*?</\1>",
+            "", content, flags=re.DOTALL | re.IGNORECASE,
+        )
+
+        # 2. Try to extract JSON from markdown code blocks
+        md_match = re.search(r"```(?:json)?\s*(.*?)\s*```", content, re.DOTALL)
+        if md_match:
+            content = md_match.group(1).strip()
+
+        # 3. Try direct parse
+        parsed = self._try_parse_json(content)
+        if parsed is not None:
+            return self._normalize_parsed(parsed)
+
+        # 4. Try to find first [ ... ] in the text
+        bracket_match = re.search(r"\[.*\]", content, re.DOTALL)
+        if bracket_match:
+            parsed = self._try_parse_json(bracket_match.group(0))
+            if parsed is not None:
+                return self._normalize_parsed(parsed)
+
+        # 5. Try to find first { ... } and wrap in array
+        brace_match = re.search(r"\{.*\}", content, re.DOTALL)
+        if brace_match:
+            parsed = self._try_parse_json("[" + brace_match.group(0) + "]")
+            if parsed is not None:
+                return self._normalize_parsed(parsed)
+
+        logger.warning(
+            "Refiner: could not parse response (%d chars). First 200: %s",
+            len(content), content[:200],
+        )
+        return []
+
+    @staticmethod
+    def _try_parse_json(text: str):
+        """Try to parse JSON, return None on failure."""
+        try:
+            return json.loads(text)
+        except (json.JSONDecodeError, ValueError):
+            # Try fixing common issues: trailing commas
+            cleaned = re.sub(r",\s*([}\]])", r"\1", text)
+            try:
+                return json.loads(cleaned)
+            except (json.JSONDecodeError, ValueError):
+                return None
+
+    @staticmethod
+    def _normalize_parsed(parsed) -> list[dict]:
+        """Normalize parsed JSON into list[dict] format."""
+        if isinstance(parsed, list):
+            items = parsed
+        elif isinstance(parsed, dict):
+            # Could be {"items": [...]} or {"keywords": [...]}
+            items = (
+                parsed.get("items")
+                or parsed.get("keywords")
+                or parsed.get("results")
+                or [parsed]
+            )
+        else:
+            return []
+
+        result = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            refined = (
+                item.get("refined_word")
+                or item.get("word")
+                or item.get("term")
+                or ""
+            )
+            category = item.get("category", "other")
+            originals = (
+                item.get("original_words")
+                or item.get("originals")
+                or item.get("original")
+                or []
+            )
+            if isinstance(originals, str):
+                originals = [originals]
+
+            if refined.strip():
+                result.append({
+                    "refined_word": refined.strip(),
+                    "category": category,
+                    "original_words": originals,
+                })
+        return result
+
+    # ── Cross-batch merge ─────────────────────────────────────
 
     def _merge_passes(
         self, pass1: list[dict], pass2: list[dict]
     ) -> list[dict]:
-        """Merge pass-2 results back: rewrite original_words to point
-        through to the raw keywords from pass 1."""
-        # Build pass-1 mapping: refined_word -> list of original_words
+        """Rewrite original_words through both passes."""
         p1_originals: dict[str, list[str]] = {}
         for item in pass1:
             rw = item.get("refined_word", "").strip().lower()
@@ -125,8 +221,6 @@ class LLMKeywordRefiner:
         for item in pass2:
             rw2 = item.get("refined_word", "").strip()
             cat2 = item.get("category", "other")
-            # Collect ALL raw original_words from pass-1 items that
-            # pass-2 merged together
             all_originals: list[str] = []
             for p2_orig in item.get("original_words", []):
                 key = p2_orig.strip().lower()
@@ -134,63 +228,14 @@ class LLMKeywordRefiner:
                     all_originals.extend(p1_originals[key])
                 else:
                     all_originals.append(p2_orig)
-
             merged.append({
                 "refined_word": rw2,
                 "category": cat2,
-                "original_words": list(dict.fromkeys(all_originals)),  # dedup, keep order
+                "original_words": list(dict.fromkeys(all_originals)),
             })
 
         logger.info(
-            "  Refiner: pass1 produced %d items, pass2 merged to %d",
+            "  Refiner: pass1=%d items -> pass2 merged to %d",
             len(pass1), len(merged),
         )
         return merged
-
-    def _refine_batch(self, batch: list[tuple[str, str]]) -> list[dict]:
-        """Refine a single batch of (word, category) tuples."""
-        raw_text_list = "\n".join([f"- {w} ({c})" for w, c in batch])
-        prompt = self._template.replace("{raw_keywords}", raw_text_list)
-        
-        try:
-            # 1. Try primary structured output
-            result: RefinedKeywordListSO = self._structured_llm.invoke(prompt)
-            if result and result.items:
-                return self._parse_so_result(result)
-            
-            # 2. Fallback: Manual parse
-            return self._manual_fallback(prompt)
-        except Exception as exc:
-            logger.debug("SO Keyword Refiner failed: %s. Trying manual fallback...", exc)
-            return self._manual_fallback(prompt)
-
-    def _manual_fallback(self, prompt: str) -> list[dict]:
-        try:
-            raw_response = self._llm.invoke(prompt)
-            content = raw_response.content if hasattr(raw_response, "content") else str(raw_response)
-            clean_content = self._clean_json_text(content)
-            
-            parsed = json.loads(clean_content)
-            if isinstance(parsed, list):
-                result = RefinedKeywordListSO(items=parsed)
-            elif isinstance(parsed, dict):
-                if "items" in parsed:
-                    result = RefinedKeywordListSO(items=parsed["items"])
-                else:
-                    return []
-            else:
-                return []
-            return self._parse_so_result(result)
-        except Exception as exc:
-            logger.warning("Manual fallback keyword refiner failed: %s", exc)
-            return []
-
-    def _parse_so_result(self, result: RefinedKeywordListSO) -> list[dict]:
-        return [
-            {
-                "refined_word": getattr(item, 'refined_word', item.get('refined_word', '')),
-                "category": getattr(item, 'category', item.get('category', 'other')),
-                "original_words": getattr(item, 'original_words', item.get('original_words', []))
-            }
-            for item in result.items
-        ]

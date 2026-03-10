@@ -10,4 +10,4 @@ collection_name: raptor_chunks
 
 # Размерность вектора — должна совпадать с embedding_dim в embeddings конфиге.
 # deepseek → 1536, nomic-embed-text → 768
-vector_size: 384
+vector_size: 768
