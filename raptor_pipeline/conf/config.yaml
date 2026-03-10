@@ -19,7 +19,6 @@ defaults:
   - prompts@prompts.keywords: keywords
   - prompts@prompts.refine_keywords: refine_keywords
   - prompts@prompts.relations: relations
-  - optional bertopic
   - _self_
 
 # ── Глобальные параметры ──────────────────────────────────────
@@ -32,6 +31,11 @@ input_file: null
 
 # Включить BERTopic для извлечения ключевых слов по коллекции статей
 use_bertopic: false
+
+bertopic:
+  n_topics: auto
+  top_n_words: 10
+  min_topic_size: 3
 
 # Уровень логирования (DEBUG / INFO / WARNING / ERROR)
 log_level: INFO
