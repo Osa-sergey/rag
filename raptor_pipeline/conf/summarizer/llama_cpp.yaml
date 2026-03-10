@@ -1,0 +1,17 @@
+# Summarizer: llama.cpp Server (Локальная LLM с батчингом)
+# Суммаризация чанков через OpenAI-совместимый API llama-server.
+# ──────────────────────────────────────────────────────────────
+
+provider: llama_cpp
+
+# Имя модели — для логов (llama-server игнорирует это поле).
+model_name: gemma-3-12b-it
+
+# URL API (llama-server по умолчанию: http://localhost:8080)
+base_url: http://localhost:8080/v1
+
+# Температура генерации.
+temperature: 0.3
+
+# Максимальное количество токенов в ответе.
+max_tokens: 1024

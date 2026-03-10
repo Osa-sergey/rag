@@ -1,4 +1,4 @@
-"""LLM-based summariser using LangChain (DeepSeek / Ollama)."""
+"""LLM-based summariser using LangChain (DeepSeek / Ollama / llama.cpp)."""
 from __future__ import annotations
 
 import logging
@@ -37,7 +37,19 @@ def _build_llm(cfg: DictConfig):
             num_predict=cfg.get("max_tokens", 1024),
             format=cfg.get("format"),
         )
-    raise ValueError(f"Unknown summariser LLM provider: {provider}")
+    if provider == "llama_cpp":
+        from langchain_openai import ChatOpenAI
+
+        # llama-server exposes an OpenAI-compatible API.
+        # Use --parallel N on the server for true continuous batching.
+        return ChatOpenAI(
+            model=cfg.get("model_name", "gemma-3-12b-it"),
+            openai_api_key="no-key-required",
+            openai_api_base=cfg.get("base_url", "http://localhost:8080/v1"),
+            temperature=cfg.get("temperature", 0.1),
+            max_tokens=cfg.get("max_tokens", 2048),
+        )
+    raise ValueError(f"Unknown LLM provider: {provider}")
 
 
 class LLMSummarizer(BaseSummarizer):
