@@ -20,6 +20,11 @@ from raptor_pipeline.raptor.tree_builder import RaptorNode, RaptorTreeBuilder
 from raptor_pipeline.stores.graph_store import Neo4jGraphStore
 from raptor_pipeline.stores.vector_store import QdrantVectorStore
 from raptor_pipeline.summarizer.llm_summarizer import LLMSummarizer
+from raptor_pipeline.knowledge_graph.link_parser import (
+    extract_links_from_text,
+    parse_article_version,
+    ExtractedLink,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +144,13 @@ class RaptorPipeline:
         article_id = data.get("article_id", yaml_path.stem)
         document = data.get("document", [])
 
-        logger.info("> Processing article '%s' from %s", article_id, yaml_path.name)
+        # Parse version from filename
+        article_name, version = parse_article_version(yaml_path.name)
+
+        logger.info(
+            "> Processing article '%s' (name='%s', version='%s') from %s",
+            article_id, article_name, version, yaml_path.name,
+        )
 
         # ── Step 1: Chunking ──────────────────────────────────
         chunks: list[Chunk] = self._chunker.chunk(document, article_id)
@@ -156,10 +167,45 @@ class RaptorPipeline:
         # ── Step 3: Knowledge graph extraction (Hierarchical) ──
         logger.info("  + Extracting Knowledge Graph from %d nodes...", len(nodes))
 
-        # Maximum text length sent to LLM (chars).  Longer texts
-        # (e.g. high-level RAPTOR summaries) are truncated to keep
-        # inference fast and prevent OOM on the model side.
         max_text_chars: int = self.cfg.get("max_text_chars", 3000)
+
+        # 3.0: Extract links from all nodes BEFORE keyword extraction.
+        # Link display texts become protected keywords (not refiner-editable).
+        all_article_links: list[ExtractedLink] = []
+        link_keywords_by_node: dict[str, list[Keyword]] = {}
+
+        for node in nodes:
+            node_links = extract_links_from_text(node.text)
+            all_article_links.extend(node_links)
+            link_kws = []
+            for lnk in node_links:
+                # Use display text as atomic keyword
+                display = lnk.display.strip()
+                if display and len(display) > 1:
+                    link_kws.append(Keyword(
+                        word=display,
+                        category="reference",
+                        confidence=1.0,
+                        chunk_id=node.node_id,
+                    ))
+            link_keywords_by_node[node.node_id] = link_kws
+
+        # Deduplicate article-level links
+        seen_link_targets: set[str] = set()
+        unique_links: list[ExtractedLink] = []
+        for lnk in all_article_links:
+            key = f"{lnk.target_article_id}#{lnk.section}"
+            if key not in seen_link_targets:
+                seen_link_targets.add(key)
+                unique_links.append(lnk)
+
+        if unique_links:
+            logger.info("  + Extracted %d unique links from text", len(unique_links))
+            for lnk in unique_links:
+                logger.info(
+                    "    %s → target='%s' section='%s' display='%s'",
+                    lnk.link_type, lnk.target, lnk.section, lnk.display,
+                )
 
         # 3.1: Extract raw keywords ─── batched parallel ───────
         def _extract_node_kws(node: RaptorNode):
@@ -189,14 +235,29 @@ class RaptorPipeline:
 
         raw_keywords_by_node: dict[str, list] = {}
         all_raw_keywords: list[dict] = []
-        for node_id, kws in kw_results:
-            raw_keywords_by_node[node_id] = kws
-            for k in kws:
-                all_raw_keywords.append({"word": k.word, "category": k.category})
+        # Set of protected keywords (from links) — not sent to refiner
+        protected_keywords: set[str] = set()
 
-        # 3.2: Refine keywords globally
-        logger.info("  + Refining %d raw keywords globally...", len(all_raw_keywords))
-        refined_list = self._kw_refiner.refine(all_raw_keywords)
+        for node_id, kws in kw_results:
+            # Merge link-based keywords with LLM-extracted keywords
+            link_kws = link_keywords_by_node.get(node_id, [])
+            combined = list(kws) + link_kws
+            raw_keywords_by_node[node_id] = combined
+            for k in combined:
+                all_raw_keywords.append({"word": k.word, "category": k.category})
+                if k.category == "reference":
+                    protected_keywords.add(k.word.lower())
+
+        # 3.2: Refine keywords globally — skip protected (link) keywords
+        refiner_input = [
+            kw for kw in all_raw_keywords
+            if kw["word"].lower() not in protected_keywords
+        ]
+        logger.info(
+            "  + Refining %d keywords globally (%d protected link-keywords skipped)...",
+            len(refiner_input), len(protected_keywords),
+        )
+        refined_list = self._kw_refiner.refine(refiner_input)
 
         # Build mapping: original_word (lowercased) -> refined info.
         # Both sides are lowercased to avoid case-mismatch between
@@ -351,18 +412,37 @@ class RaptorPipeline:
         logger.info("  + Stored %d nodes in Qdrant", len(nodes))
 
         # ── Step 6: Store in Neo4j ────────────────────────────
-        self._graph_store.store_article(article_id, summary=article_summary)
+        self._graph_store.store_article(
+            article_id,
+            summary=article_summary,
+            article_name=article_name,
+            version=version,
+        )
         self._graph_store.store_keywords(article_id, all_refined_keywords)
         self._graph_store.store_relations(article_id, all_relations)
+        if unique_links:
+            self._graph_store.store_links(article_id, unique_links, version=version)
+            logger.info("  + Stored %d cross-article links in Neo4j", len(unique_links))
         logger.info("  + Stored KG in Neo4j")
 
         return {
             "article_id": article_id,
+            "article_name": article_name,
+            "version": version,
             "chunks": len(chunks),
             "raptor_nodes": len(nodes),
             "keywords": len(all_refined_keywords),
             "unique_keywords": len(unique_kws),
             "relations": len(all_relations),
+            "links": [
+                {
+                    "type": lnk.link_type,
+                    "target": lnk.target,
+                    "section": lnk.section,
+                    "display": lnk.display,
+                }
+                for lnk in unique_links
+            ],
             "article_summary": article_summary[:200] + "..." if len(article_summary) > 200 else article_summary,
         }
 

@@ -50,15 +50,66 @@ class Neo4jGraphStore:
         logger.info("Neo4j indexes ensured")
 
     # ------------------------------------------------------------------
-    def store_article(self, article_id: str, title: str = "", summary: str = "") -> None:
+    def store_article(
+        self,
+        article_id: str,
+        title: str = "",
+        summary: str = "",
+        article_name: str = "",
+        version: str = "",
+    ) -> None:
         """Create or merge an Article node."""
         with self._driver.session(database=self._database) as session:
             session.run(
-                "MERGE (a:Article {id: $id}) SET a.title = $title, a.summary = $summary",
+                """
+                MERGE (a:Article {id: $id})
+                SET a.title = $title,
+                    a.summary = $summary,
+                    a.article_name = $article_name,
+                    a.version = $version
+                """,
                 id=article_id,
                 title=title,
                 summary=summary,
+                article_name=article_name,
+                version=version,
             )
+
+    # ------------------------------------------------------------------
+    def store_links(
+        self,
+        source_article_id: str,
+        links: list,
+        version: str = "",
+    ) -> None:
+        """Store cross-article references from Obsidian links.
+
+        Creates REFERENCES relationships between Article nodes.
+        Target articles that don't exist yet get created as placeholders
+        (they'll be enriched when actually processed later).
+        """
+        with self._driver.session(database=self._database) as session:
+            for link in links:
+                if link.link_type != "obsidian" or not link.target:
+                    continue
+                session.run(
+                    """
+                    MERGE (src:Article {id: $source_id})
+                    MERGE (tgt:Article {article_name: $target_name})
+                    ON CREATE SET tgt.id = $target_name
+                    MERGE (src)-[r:REFERENCES]->(tgt)
+                    SET r.section = $section,
+                        r.display = $display,
+                        r.version = $version,
+                        r.raw = $raw
+                    """,
+                    source_id=source_article_id,
+                    target_name=link.target_article_id,
+                    section=link.section,
+                    display=link.display,
+                    version=version,
+                    raw=link.raw,
+                )
 
     # ------------------------------------------------------------------
     def store_keywords(
