@@ -1,0 +1,23 @@
+vault:
+  path: "D:\\vault\\project_live\\day_notes"
+  daily_dir: "daily"
+  weekly_dir: "weekly"
+  monthly_dir: "monthly"
+  people_dir: "D:\\vault\\project_live\\people"
+
+# Default mode and filter options (overridable from CLI)
+mode: "list-tasks"      # list-tasks | search | stats | wellness | people | parse
+
+# Filters (all optional, used in list-tasks / search / wellness modes)
+status: null             # open | done | cancelled | in_progress
+priority: null           # critical | high | medium | low | normal
+date_range: null         # today | this_week | this_month | YYYY-MM-DD | YYYY-MM-DD..YYYY-MM-DD
+person: null             # filter tasks by person name
+section: null            # filter by section name
+query: null              # free-text search in task text
+
+# Output format
+output:
+  format: "table"        # table | json | csv
+  max_items: 50          # limit output rows
+  show_raw: false        # show raw markdown line (list-tasks mode only)
