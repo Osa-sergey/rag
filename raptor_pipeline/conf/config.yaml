@@ -29,13 +29,6 @@ input_dir: parsed_yaml
 # Если указан — обработается только один файл из input_dir
 input_file: null
 
-# Включить BERTopic для извлечения ключевых слов по коллекции статей
-use_bertopic: false
-
-bertopic:
-  n_topics: auto
-  top_n_words: 10
-  min_topic_size: 3
 
 # Уровень логирования (DEBUG / INFO / WARNING / ERROR)
 log_level: DEBUG
