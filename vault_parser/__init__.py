@@ -3,6 +3,7 @@ from vault_parser.models import (
     VaultTask,
     TaskStatus,
     Priority,
+    Recurrence,
     SleepData,
     EnergyData,
     DayNote,
@@ -10,12 +11,15 @@ from vault_parser.models import (
     MonthlyNote,
 )
 from vault_parser.parser import VaultParser
+from vault_parser.writer import DailyNoteEditor
 
 __all__ = [
     "VaultParser",
+    "DailyNoteEditor",
     "VaultTask",
     "TaskStatus",
     "Priority",
+    "Recurrence",
     "SleepData",
     "EnergyData",
     "DayNote",

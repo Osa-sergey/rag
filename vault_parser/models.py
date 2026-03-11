@@ -101,6 +101,28 @@ class EnergyData:
         return sum(vals) / len(vals) if vals else None
 
 
+# ── Recurrence ───────────────────────────────────────────────────────
+@dataclass
+class Recurrence:
+    """Recurring task rule parsed from 🔁 marker.
+
+    Examples:
+        - ``every day``
+        - ``every 2 weeks``
+        - ``every mon,wed,fri``
+        - ``every month``
+        - ``every 2 weeks until 2025-12-31``
+    """
+    rule: str                   # e.g. "every day", "every 2 weeks", "every mon,wed,fri"
+    until: date | None = None   # optional end date
+
+    def __str__(self) -> str:
+        s = f"🔁 {self.rule}"
+        if self.until:
+            s += f" until {self.until}"
+        return s
+
+
 # ── Task ─────────────────────────────────────────────────────────────
 @dataclass
 class VaultTask:
@@ -110,12 +132,15 @@ class VaultTask:
     priority: Priority = Priority.NORMAL
     completion_date: date | None = None   # ✅ YYYY-MM-DD
     scheduled_date: date | None = None    # ⏳ YYYY-MM-DD
+    start_date: date | None = None        # 🛫 YYYY-MM-DD
+    due_date: date | None = None          # 📅 YYYY-MM-DD
+    recurrence: Recurrence | None = None  # 🔁 every ...
     time_slot: TimeSlot | None = None     # 11:30-12:00
     source_file: Path | None = None
     source_date: date | None = None       # date from filename
     section: str = ""                     # section heading the task lives under
     wiki_links: list[WikiLink] = field(default_factory=list)
-    people: list[str] = field(default_factory=list)  # display names from wiki-links
+    people: list[str] = field(default_factory=list)  # canonical names from wiki-links
     tags: list[str] = field(default_factory=list)     # #tag items
     inline_comment: str | None = None     # text in parentheses at the end
     raw_line: str = ""                    # original markdown line
@@ -136,6 +161,9 @@ class VaultTask:
             "priority": self.priority.value,
             "completion_date": str(self.completion_date) if self.completion_date else None,
             "scheduled_date": str(self.scheduled_date) if self.scheduled_date else None,
+            "start_date": str(self.start_date) if self.start_date else None,
+            "due_date": str(self.due_date) if self.due_date else None,
+            "recurrence": str(self.recurrence) if self.recurrence else None,
             "time_slot": str(self.time_slot) if self.time_slot else None,
             "source_file": str(self.source_file) if self.source_file else None,
             "source_date": str(self.source_date) if self.source_date else None,

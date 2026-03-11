@@ -38,6 +38,7 @@ python -m vault_parser mode=parse
 | `stats` | Агрегированная статистика (заметки, задачи, сон, энергия, люди) |
 | `wellness` | Таблица сна и энергии с фильтрацией по дням |
 | `people` | Реестр людей и групп из `people/` директории |
+| `edit` | Редактор дневных заметок (MCP-режим) |
 | `parse` | Полный JSON-дамп всех заметок с задачами и метаданными |
 
 ---
@@ -240,6 +241,93 @@ for m in memberships:
 
 ---
 
+## Режим `edit` — редактор дневных заметок
+
+Создание и обновление дневных заметок. Подготовлен для MCP-сервера.
+
+### CLI
+
+```bash
+# Создать заметку из шаблона
+python -m vault_parser mode=edit action=create date=2025-12-01
+
+# Сон (partial update — только указанные поля)
+python -m vault_parser mode=edit action=set-sleep date=2025-12-01 sleep_quality=8 deep_sleep=true
+
+# Энергия
+python -m vault_parser mode=edit action=set-energy date=2025-12-01 morning=7 evening=9
+
+# Добавить задачу с датами и рекурренцией
+python -m vault_parser mode=edit action=add-task date=2025-12-01 \
+  text=стендап start_date=2025-12-01 due_date=2025-06-30 \
+  "recurrence=every 2 weeks"
+
+# Пометить задачу как выполненную
+python -m vault_parser mode=edit action=done date=2025-12-01 query=стендап
+
+# Отменить задачу
+python -m vault_parser mode=edit action=cancel date=2025-12-01 query=отчет
+
+# Прочитать заметку (JSON)
+python -m vault_parser mode=edit action=read date=2025-12-01
+```
+
+> **Примечание**: значения с запятыми нужно экранировать для Hydra: `"recurrence='every mon,wed,fri'"`
+
+### Python API
+
+```python
+from vault_parser.writer import DailyNoteEditor
+from vault_parser.models import TaskStatus
+from datetime import date
+
+editor = DailyNoteEditor(r"D:\vault\project_live\day_notes\daily")
+
+# Создать заметку
+editor.create_from_template("2025-12-01")
+
+# Partial frontmatter
+editor.set_sleep("2025-12-01", sleep_quality=8, deep_sleep=True)
+editor.set_energy("2025-12-01", morning=7)  # day/evening — позже
+
+# Задача с рекурренцией
+editor.add_task("2025-12-01", "стендап",
+    section="main",
+    people=["Илюхин Влад"],
+    time_slot="10:00-10:15",
+    start_date=date(2025, 12, 1),
+    recurrence="every mon,wed,fri",
+)
+
+# Статус
+editor.update_task_status("2025-12-01", "стендап", TaskStatus.DONE)
+
+# Секции
+editor.set_focus("2025-12-01", ["Написать модуль", "Провести ревью"])
+editor.set_gratitude("2025-12-01", "Сделал много дел")
+
+# Чтение обратно
+note = editor.read("2025-12-01")
+print(note.all_tasks)
+```
+
+### Recurrence API
+
+```python
+from vault_parser.recurrence import expand_occurrences, next_occurrence
+from vault_parser.models import Recurrence
+from datetime import date
+
+rec = Recurrence(rule="every 2 weeks", until=date(2025, 12, 31))
+dates = expand_occurrences(rec, date(2025, 9, 1), date(2025, 10, 1))
+# [2025-09-01, 2025-09-15, 2025-09-29]
+
+nxt = next_occurrence(rec, date(2025, 9, 15))
+# 2025-09-16
+```
+
+---
+
 ## Что извлекается из заметок
 
 ### Ежедневные заметки (`YYYY-MM-DD.md`)
@@ -290,20 +378,42 @@ for m in memberships:
 | `priority` | Emoji или секция | `⏫`→critical, `🔺`→high, `🔼`→medium, `🔽`→low |
 | `completion_date` | Дата завершения | `✅ 2025-11-28` |
 | `scheduled_date` | Запланированная дата | `⏳ 2025-08-29` |
+| `start_date` | Дата начала | `🛫 2025-09-01` |
+| `due_date` | Дедлайн | `📅 2025-09-15` |
+| `recurrence` | Периодичность | `🔁 every 2 weeks until 2025-12-31` |
 | `time_slot` | Временной слот | `11:30-12:00` |
 | `wiki_links` | Все Obsidian-ссылки | `[[[Котиков Федор\|Федей]], [[MCP]]]` |
-| `people` | Только реальные люди (из реестра) | `["Федей"]` — не включает `[[MCP]]` |
+| `people` | Только реальные люди (из реестра) | `["Котиков Федор"]` |
 | `tags` | Хэш-теги | `["python", "rag"]` |
 | `inline_comment` | Текст в скобках | `"не получилось"` |
 | `text` | Очищенный текст | без emoji/дат/синтаксиса |
 
+#### Периодические задачи (🔁)
+
+Формат рекурренции (аналог cron для дней и выше):
+
+| Правило | Описание |
+|---------|----------|
+| `every day` | Каждый день |
+| `every 2 days` | Каждые 2 дня |
+| `every week` | Каждую неделю |
+| `every 2 weeks` | Раз в 2 недели |
+| `every month` | Каждый месяц |
+| `every 3 months` | Раз в квартал |
+| `every mon,wed,fri` | Конкретные дни недели (EN/RU: mon/пн, tue/вт, wed/ср...) |
+
+Опционально `until YYYY-MM-DD` — дата окончания повторений.
+
 #### Отображение в таблице
 
 В табличном выводе `list-tasks`:
-- `@Федей,Ильей` — реальные люди (голубой)
-- `🔗решение,MCP` — wiki-ссылки на заметки (серый)
+- `@Котиков Федор,Коряев Илья` — реальные люди (голубой)
+- `🔗mlp_авиатека.drawio` — wiki-ссылки на заметки (серый)
+- `🛫2025-09-01` — дата начала
+- `📅2025-09-15` — дедлайн
 - `⏳2025-08-29` — запланированная дата (жёлтый)
 - `✅2025-11-28` — дата завершения (зелёный)
+- `🔁 every week` — периодичность
 - `16:00-17:00` — временной слот (пурпурный)
 
 ### Недельные заметки (`YYYY-Wnn.md`)
@@ -391,11 +501,18 @@ overdue = overdue_tasks(tasks)
 vault_parser/
 ├── __init__.py          # Публичное API
 ├── __main__.py          # Hydra CLI entry point
-├── models.py            # Dataclass-модели (VaultTask, DayNote, WeeklyNote, ...)
+├── models.py            # Dataclass-модели (VaultTask, Recurrence, DayNote, ...)
 ├── parser.py            # Regex-парсинг markdown + VaultParser facade
 ├── people.py            # PeopleRegistry, Person, GroupMembership
+├── recurrence.py        # Движок рекурренции: next_occurrence, expand_occurrences
 ├── filters.py           # Фильтрация задач по критериям
 ├── formatters.py        # Table / JSON / CSV / Stats / People форматирование
+├── writer/              # Редактор дневных заметок
+│   ├── __init__.py      # re-export DailyNoteEditor
+│   ├── editor.py       # DailyNoteEditor (CRUD)
+│   ├── frontmatter.py  # YAML frontmatter сериализация
+│   ├── sections.py     # Markdown-секции заметок
+│   └── task_lines.py   # Форматирование строк задач
 ├── conf/
 │   └── config.yaml      # Hydra-конфиг по умолчанию
 └── README.md            # ← вы здесь

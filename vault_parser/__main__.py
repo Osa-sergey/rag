@@ -125,6 +125,137 @@ def main(cfg: DictConfig) -> None:
             print(format_people_table(registry))
         return
 
+    # ── Edit mode ────────────────────────────────────────────────
+    if mode == "edit":
+        from vault_parser.writer import DailyNoteEditor
+        from vault_parser.models import TaskStatus
+        from datetime import date as date_type
+
+        note_date = cfg.get("date")
+        if not note_date:
+            print("Error: date= is required for edit mode")
+            return
+
+        daily_dir = Path(vault_dir) / vault_cfg.get("daily_dir", "daily")
+        editor = DailyNoteEditor(daily_dir)
+        action = cfg.get("action", "read")
+
+        if action == "create":
+            try:
+                tpl = vault_cfg.get("template_path")
+                path = editor.create_from_template(note_date, template_path=tpl)
+                print(f"Created: {path}")
+            except FileExistsError as e:
+                print(f"Error: {e}")
+
+        elif action == "set-sleep":
+            sleep_fields = {}
+            for key in ["bed_time_start", "sleep_start", "sleep_end", "sleep_duration",
+                         "sleep_quality", "quick_fall_asleep", "night_awakenings",
+                         "deep_sleep", "remembered_dreams", "no_nightmare",
+                         "morning_mood", "no_phone", "physical_exercise", "late_dinner"]:
+                val = cfg.get(key)
+                if val is not None:
+                    sleep_fields[key] = val
+            if not sleep_fields:
+                print("Error: provide at least one sleep field (e.g. sleep_quality=8)")
+                return
+            editor.set_sleep(note_date, **sleep_fields)
+            print(f"Updated sleep for {note_date}: {list(sleep_fields.keys())}")
+
+        elif action == "set-energy":
+            editor.set_energy(
+                note_date,
+                morning=cfg.get("morning"),
+                day=cfg.get("day_energy"),
+                evening=cfg.get("evening"),
+            )
+            print(f"Updated energy for {note_date}")
+
+        elif action == "set-focus":
+            items = cfg.get("items", "")
+            if isinstance(items, str):
+                items = [i.strip() for i in items.split(";") if i.strip()]
+            editor.set_focus(note_date, items)
+            print(f"Set focus for {note_date}: {items}")
+
+        elif action == "add-task":
+            text = cfg.get("text")
+            if not text:
+                print("Error: text= is required")
+                return
+            section = cfg.get("section") or "main"
+            people_str = cfg.get("people", "")
+            people = [p.strip() for p in people_str.split(",") if p.strip()] if people_str else None
+
+            sched = cfg.get("scheduled_date")
+            start = cfg.get("start_date")
+            due = cfg.get("due_date")
+            scheduled_date = date_type.fromisoformat(sched) if sched else None
+            start_date = date_type.fromisoformat(start) if start else None
+            due_date = date_type.fromisoformat(due) if due else None
+
+            editor.add_task(
+                note_date, text,
+                section=section,
+                time_slot=cfg.get("time_slot"),
+                people=people,
+                scheduled_date=scheduled_date,
+                start_date=start_date,
+                due_date=due_date,
+                recurrence=cfg.get("recurrence"),
+            )
+            print(f"Added task to {note_date}: {text}")
+
+        elif action in ("done", "cancel", "progress"):
+            query = cfg.get("query")
+            if not query:
+                print("Error: query= is required to match a task")
+                return
+            status_map = {"done": TaskStatus.DONE, "cancel": TaskStatus.CANCELLED, "progress": TaskStatus.IN_PROGRESS}
+            result = editor.update_task_status(note_date, query, status_map[action])
+            if result:
+                print(f"Marked '{query}' as {action} in {note_date}")
+            else:
+                print(f"No task matching '{query}' found in {note_date}")
+
+        elif action == "set-gratitude":
+            editor.set_gratitude(note_date, cfg.get("text", ""))
+            print(f"Updated gratitude for {note_date}")
+
+        elif action == "set-notes":
+            editor.set_notes(note_date, cfg.get("text", ""))
+            print(f"Updated notes for {note_date}")
+
+        elif action == "set-problem":
+            editor.set_problem(note_date, cfg.get("what", ""), cfg.get("cause", ""), cfg.get("consequences", ""))
+            print(f"Updated problem for {note_date}")
+
+        elif action == "think-about":
+            editor.add_think_about(note_date, cfg.get("text", ""))
+            print(f"Added think-about for {note_date}")
+
+        elif action == "read":
+            note = editor.read(note_date)
+            if note:
+                import json
+                from vault_parser.formatters import format_tasks_json
+                print(json.dumps({
+                    "date": str(note.date),
+                    "focus": note.focus,
+                    "tasks": [t.as_dict() for t in note.all_tasks],
+                    "gratitude": note.gratitude,
+                    "notes_text": note.notes_text,
+                }, ensure_ascii=False, indent=2))
+            else:
+                print(f"Note not found: {note_date}")
+
+        else:
+            print(f"Unknown action: {action}. Use: create, set-sleep, set-energy, "
+                  f"set-focus, add-task, done, cancel, progress, "
+                  f"set-gratitude, set-notes, set-problem, think-about, read")
+        return
+
     # ── Stats mode ───────────────────────────────────────────────
     if mode == "stats":
         all_notes = parser.parse_all()

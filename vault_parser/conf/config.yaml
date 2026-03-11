@@ -4,9 +4,10 @@ vault:
   weekly_dir: "weekly"
   monthly_dir: "monthly"
   people_dir: "D:\\vault\\project_live\\people"
+  template_path: "D:\\vault\\project_live\\zettelkasten\\templates\\t_daily.md"
 
 # Default mode and filter options (overridable from CLI)
-mode: "list-tasks"      # list-tasks | search | stats | wellness | people | parse
+mode: "list-tasks"      # list-tasks | search | stats | wellness | people | edit | parse
 
 # Filters (all optional, used in list-tasks / search / wellness modes)
 status: null             # open | done | cancelled | in_progress
@@ -15,6 +16,42 @@ date_range: null         # today | this_week | this_month | YYYY-MM-DD | YYYY-MM
 person: null             # filter tasks by person name
 section: null            # filter by section name
 query: null              # free-text search in task text
+
+# Edit mode parameters (used with mode=edit)
+action: null             # create | set-sleep | set-energy | set-focus | add-task | done | cancel | progress | read | ...
+date: null               # target note date YYYY-MM-DD (required for edit mode)
+text: null               # task text or section content
+items: null              # semicolon-separated focus items
+people: null             # comma-separated person filenames
+time_slot: null           # HH:MM-HH:MM
+scheduled_date: null      # ⏳ YYYY-MM-DD
+start_date: null          # 🛫 YYYY-MM-DD
+due_date: null            # 📅 YYYY-MM-DD
+recurrence: null          # 🔁 e.g. "every day", "every 2 weeks", "every mon,wed,fri"
+what: null                # problem "what" text
+cause: null               # problem cause
+consequences: null        # problem consequences
+
+# Sleep fields (used with action=set-sleep)
+bed_time_start: null
+sleep_start: null
+sleep_end: null
+sleep_duration: null
+sleep_quality: null
+quick_fall_asleep: null
+night_awakenings: null
+deep_sleep: null
+remembered_dreams: null
+no_nightmare: null
+morning_mood: null
+no_phone: null
+physical_exercise: null
+late_dinner: null
+
+# Energy fields (used with action=set-energy)
+morning: null
+day_energy: null
+evening: null
 
 # Output format
 output:

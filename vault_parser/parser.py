@@ -21,6 +21,7 @@ from vault_parser.models import (
     MonthlyNote,
     NoteType,
     Priority,
+    Recurrence,
     ReflectionBlock,
     SleepData,
     TaskStatus,
@@ -46,6 +47,17 @@ _COMPLETION_DATE_RE = re.compile(r"✅\s*(\d{4}-\d{2}-\d{2})")
 
 # Scheduled date:  ⏳ 2025-08-29
 _SCHEDULED_DATE_RE = re.compile(r"⏳\s*(\d{4}-\d{2}-\d{2})")
+
+# Start date:  🛫 2025-09-01
+_START_DATE_RE = re.compile(r"🛫\s*(\d{4}-\d{2}-\d{2})")
+
+# Due date:  📅 2025-09-15
+_DUE_DATE_RE = re.compile(r"📅\s*(\d{4}-\d{2}-\d{2})")
+
+# Recurrence:  🔁 every day  or  🔁 every 2 weeks until 2025-12-31
+_RECURRENCE_RE = re.compile(
+    r"🔁\s*(.+?)(?:\s+until\s+(\d{4}-\d{2}-\d{2}))?\s*$"
+)
 
 # Priority emoji markers
 _PRIORITY_EMOJI: dict[str, Priority] = {
@@ -287,6 +299,26 @@ def parse_task_line(
     if sm:
         scheduled_date = _parse_date(sm.group(1))
 
+    # ─ Start date (🛫) ───────────────────────────────────────────
+    start_date: date | None = None
+    sd_m = _START_DATE_RE.search(body)
+    if sd_m:
+        start_date = _parse_date(sd_m.group(1))
+
+    # ─ Due date (📅) ─────────────────────────────────────────────
+    due_date: date | None = None
+    dd_m = _DUE_DATE_RE.search(body)
+    if dd_m:
+        due_date = _parse_date(dd_m.group(1))
+
+    # ─ Recurrence (🔁) ───────────────────────────────────────────
+    recurrence: Recurrence | None = None
+    rec_m = _RECURRENCE_RE.search(body)
+    if rec_m:
+        rule = rec_m.group(1).strip()
+        until = _parse_date(rec_m.group(2)) if rec_m.group(2) else None
+        recurrence = Recurrence(rule=rule, until=until)
+
     # ─ Priority ──────────────────────────────────────────────────
     priority = _detect_priority_from_emoji(body) or _section_to_priority(section)
 
@@ -314,9 +346,13 @@ def parse_task_line(
 
     # ─ Clean text ────────────────────────────────────────────────
     clean = body
-    # Remove completion / scheduled markers
+    # Remove date markers
     clean = _COMPLETION_DATE_RE.sub("", clean)
     clean = _SCHEDULED_DATE_RE.sub("", clean)
+    clean = _START_DATE_RE.sub("", clean)
+    clean = _DUE_DATE_RE.sub("", clean)
+    # Remove recurrence
+    clean = _RECURRENCE_RE.sub("", clean)
     # Remove priority emojis
     clean = _PRIORITY_RE.sub("", clean)
     # Remove wiki-link syntax but keep display text
@@ -332,6 +368,9 @@ def parse_task_line(
         priority=priority,
         completion_date=completion_date,
         scheduled_date=scheduled_date,
+        start_date=start_date,
+        due_date=due_date,
+        recurrence=recurrence,
         time_slot=time_slot,
         source_file=source_file,
         source_date=source_date,
