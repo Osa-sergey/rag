@@ -11,7 +11,7 @@ from document_parser.text_extractor import flatten_blocks, render_block
 from raptor_pipeline.chunker.base import BaseChunker, Chunk
 
 if TYPE_CHECKING:
-    from raptor_pipeline.embeddings.base import BaseEmbeddingProvider
+    from interfaces import BaseEmbeddingProvider
 
 logger = logging.getLogger(__name__)
 

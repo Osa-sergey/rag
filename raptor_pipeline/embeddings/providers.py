@@ -5,7 +5,7 @@ import logging
 
 from omegaconf import DictConfig
 
-from raptor_pipeline.embeddings.base import BaseEmbeddingProvider
+from interfaces import BaseEmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -21,12 +21,16 @@ class DeepSeekEmbeddingProvider(BaseEmbeddingProvider):
             openai_api_key=cfg.get("api_key", ""),
             openai_api_base=cfg.get("base_url", "https://openrouter.ai/api/v1"),
         )
-        self.embedding_dim: int = cfg.get("embedding_dim", 1536)
+        self._embedding_dim: int = cfg.get("embedding_dim", 1536)
         logger.info(
             "DeepSeekEmbeddingProvider initialised (model=%s, dim=%d)",
             cfg.get("model_name"),
-            self.embedding_dim,
+            self._embedding_dim,
         )
+
+    @property
+    def embedding_dim(self) -> int:
+        return self._embedding_dim
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         return self._model.embed_documents(texts)
@@ -45,12 +49,16 @@ class OllamaEmbeddingProvider(BaseEmbeddingProvider):
             model=cfg.get("model_name", "nomic-embed-text"),
             base_url=cfg.get("base_url", "http://localhost:11434"),
         )
-        self.embedding_dim: int = cfg.get("embedding_dim", 768)
+        self._embedding_dim: int = cfg.get("embedding_dim", 768)
         logger.info(
             "OllamaEmbeddingProvider initialised (model=%s, dim=%d)",
             cfg.get("model_name"),
-            self.embedding_dim,
+            self._embedding_dim,
         )
+
+    @property
+    def embedding_dim(self) -> int:
+        return self._embedding_dim
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         return self._model.embed_documents(texts)
@@ -85,12 +93,16 @@ class HuggingFaceEmbeddingProvider(BaseEmbeddingProvider):
             model_kwargs=cfg.get("model_kwargs", {"device": "cpu"}),
             encode_kwargs=cfg.get("encode_kwargs", {"normalize_embeddings": True}),
         )
-        self.embedding_dim: int = cfg.get("embedding_dim", 384)
+        self._embedding_dim: int = cfg.get("embedding_dim", 384)
         logger.info(
             "HuggingFaceEmbeddingProvider initialised (model=%s, dim=%d)",
             model_id,
-            self.embedding_dim,
+            self._embedding_dim,
         )
+
+    @property
+    def embedding_dim(self) -> int:
+        return self._embedding_dim
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         return self._model.embed_documents(texts)

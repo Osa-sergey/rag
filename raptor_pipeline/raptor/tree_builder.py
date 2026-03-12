@@ -10,7 +10,7 @@ from omegaconf import DictConfig
 from sklearn.mixture import GaussianMixture
 
 from raptor_pipeline.chunker.base import Chunk
-from raptor_pipeline.embeddings.base import BaseEmbeddingProvider
+from interfaces import BaseEmbeddingProvider
 from raptor_pipeline.summarizer.base import BaseSummarizer
 
 logger = logging.getLogger(__name__)

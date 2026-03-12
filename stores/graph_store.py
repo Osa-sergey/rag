@@ -10,13 +10,15 @@ from typing import TYPE_CHECKING
 from neo4j import GraphDatabase
 from omegaconf import DictConfig
 
+from interfaces import BaseGraphStore
+
 if TYPE_CHECKING:
     from raptor_pipeline.knowledge_graph.base import Keyword, Relation
 
 logger = logging.getLogger(__name__)
 
 
-class Neo4jGraphStore:
+class Neo4jGraphStore(BaseGraphStore):
     """Neo4j integration — stores knowledge graph.
 
     Graph schema:

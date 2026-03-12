@@ -17,10 +17,12 @@ from qdrant_client.models import (
 
 from raptor_pipeline.raptor.tree_builder import RaptorNode
 
+from interfaces import BaseVectorStore
+
 logger = logging.getLogger(__name__)
 
 
-class QdrantVectorStore:
+class QdrantVectorStore(BaseVectorStore):
     """Qdrant integration — stores RAPTOR nodes with metadata payloads.
 
     Every point has a payload containing:

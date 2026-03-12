@@ -1,5 +1,5 @@
 """Embedding providers module."""
-from raptor_pipeline.embeddings.base import BaseEmbeddingProvider
+from interfaces import BaseEmbeddingProvider
 from raptor_pipeline.embeddings.providers import (
     DeepSeekEmbeddingProvider,
     OllamaEmbeddingProvider,
