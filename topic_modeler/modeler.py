@@ -22,19 +22,37 @@ logger = logging.getLogger(__name__)
 class TopicModeler:
     """BERTopic wrapper for cross-article topic modelling."""
 
-    def __init__(self, cfg: DictConfig) -> None:
+    def __init__(
+        self,
+        cfg,
+        embedder=None,
+        graph_store: Neo4jGraphStore | None = None,
+    ) -> None:
         self._cfg = cfg
 
-        # Embedding provider (reuse raptor_pipeline's provider)
-        from raptor_pipeline.embeddings.providers import create_embedding_provider
-        self._embedder = create_embedding_provider(cfg.embeddings)
+        # Embedding provider — инжектируется через DI или создаётся
+        if embedder is not None:
+            self._embedder = embedder
+        else:
+            from raptor_pipeline.embeddings.providers import create_embedding_provider
+            self._embedder = create_embedding_provider(cfg.embeddings)
 
-        # Graph store
-        self._graph_store = Neo4jGraphStore(cfg.stores.neo4j)
-        self._graph_store.ensure_indexes()
+        # Graph store — инжектируется через DI или создаётся
+        if graph_store is not None:
+            self._graph_store = graph_store
+        else:
+            neo4j_cfg = getattr(getattr(cfg, 'stores', None), 'graph_store', None) or \
+                        getattr(getattr(cfg, 'stores', None), 'neo4j', None)
+            if neo4j_cfg is not None:
+                self._graph_store = Neo4jGraphStore(neo4j_cfg)
+            else:
+                self._graph_store = None
+        if self._graph_store is not None:
+            self._graph_store.ensure_indexes()
 
         # Paths
-        self._model_dir = Path(cfg.get("model_dir", "outputs/bertopic_model"))
+        model_dir = cfg.model_dir if hasattr(cfg, "model_dir") else cfg.get("model_dir", "outputs/bertopic_model")
+        self._model_dir = Path(model_dir)
 
     # ------------------------------------------------------------------
     # Public API
