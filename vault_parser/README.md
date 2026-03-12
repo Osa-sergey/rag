@@ -1,45 +1,58 @@
-# 🗃️ Vault Parser
+# Vault Parser
 
 CLI-модуль для извлечения задач, метрик сна/энергии и структурированного контента из Obsidian-заметок.
 Автоматически загружает реестр людей для разделения упоминаний персон и wiki-ссылок на заметки.
+
+> Подробная справка по конфигурации: [CONFIG.md](CONFIG.md)
 
 ---
 
 ## Быстрый старт
 
-```bash
-# Windows: включить UTF-8 для emoji-вывода
-$env:PYTHONIOENCODING="utf-8"
-
-# Статистика по вольту
-python -m vault_parser mode=stats
+```powershell
+# Посмотреть доступные команды
+python -m vault_parser --help
 
 # Все открытые задачи
-python -m vault_parser mode=list-tasks status=open
+python -m vault_parser list-tasks --status open
+
+# Задачи высокого приоритета за эту неделю
+python -m vault_parser list-tasks --status open --priority high --date-range this_week
+
+# Полнотекстовый поиск
+python -m vault_parser search "tts"
 
 # Таблица сна и энергии
-python -m vault_parser mode=wellness
+python -m vault_parser wellness
 
-# Список людей из вольта
-python -m vault_parser mode=people
+# Статистика по вольту
+python -m vault_parser stats
+
+# Список людей
+python -m vault_parser people
+
+# Проверить конфиг
+python -m vault_parser validate
 
 # Полный JSON-дамп
-python -m vault_parser mode=parse
+python -m vault_parser parse
 ```
 
 ---
 
-## Режимы работы (`mode=`)
+## Команды
 
-| Режим | Описание |
-|-------|----------|
-| `list-tasks` | Вывод задач с фильтрацией *(по умолчанию)* |
+| Команда | Описание |
+|---------|----------|
+| `list-tasks` | Вывод задач с фильтрацией |
 | `search` | Полнотекстовый поиск по тексту задач |
-| `stats` | Агрегированная статистика (заметки, задачи, сон, энергия, люди) |
-| `wellness` | Таблица сна и энергии с фильтрацией по дням |
+| `stats` | Агрегированная статистика |
+| `wellness` | Таблица сна и энергии |
 | `people` | Реестр людей и групп из `people/` директории |
-| `edit` | Редактор дневных заметок (MCP-режим) |
-| `parse` | Полный JSON-дамп всех заметок с задачами и метаданными |
+| `edit` | Редактор дневных заметок (создание, обновление, удаление) |
+| `parse` | Полный JSON-дамп всех заметок |
+| `validate` | Проверить конфигурацию без запуска |
+| `show-config` | Показать текущий YAML-конфиг |
 
 ---
 
@@ -116,28 +129,16 @@ python -m vault_parser output.max_items=10 output.show_raw=true
 
 ---
 
-## Режим `wellness` — сон и энергия
+## Wellness — сон и энергия
 
-Отдельный режим для анализа сна и энергии. Поддерживает фильтрацию по дням и все форматы вывода.
+Отдельная команда для анализа сна и энергии.
 
-```bash
-# Вся таблица сна и энергии
-python -m vault_parser mode=wellness
-
-# Только сентябрь 2025
-python -m vault_parser mode=wellness date_range=2025-09-01..2025-09-30
-
-# Текущая неделя
-python -m vault_parser mode=wellness date_range=this_week
-
-# Конкретный день
-python -m vault_parser mode=wellness date_range=2025-11-28
-
-# JSON-экспорт всех полей сна
-python -m vault_parser mode=wellness output.format=json
-
-# CSV для анализа в Excel / pandas
-python -m vault_parser mode=wellness output.format=csv > sleep.csv
+```powershell
+python -m vault_parser wellness
+python -m vault_parser wellness --date-range 2025-09-01..2025-09-30
+python -m vault_parser wellness --date-range this_week
+python -m vault_parser wellness --format json
+python -m vault_parser wellness --format csv > sleep.csv
 ```
 
 ### Колонки табличного вывода
@@ -190,19 +191,16 @@ python -m vault_parser mode=wellness output.format=csv > sleep.csv
 
 ---
 
-## Режим `people` — реестр людей
+## People — реестр людей
 
 Загружает данные из `vault.people_dir`. Поддерживает два типа файлов:
 
 - **Персоны** (`Котиков Федор.md`) — YAML frontmatter с `roles`, `interests`, `tg`
 - **Группы** (`Группа КНАД.md`) — markdown-таблица `| [[Person]] | роль |`
 
-```bash
-# Все люди и группы (с ролями в группах)
-python -m vault_parser mode=people
-
-# JSON-экспорт
-python -m vault_parser mode=people output.format=json
+```powershell
+python -m vault_parser people
+python -m vault_parser people --format json
 ```
 
 ### Как работает распознавание людей
@@ -241,38 +239,54 @@ for m in memberships:
 
 ---
 
-## Режим `edit` — редактор дневных заметок
+## Edit — редактор дневных заметок
 
-Создание и обновление дневных заметок. Подготовлен для MCP-сервера.
+Создание, обновление и удаление задач в дневных заметках.
 
-### CLI
+### CLI — все действия
 
-```bash
+```powershell
 # Создать заметку из шаблона
-python -m vault_parser mode=edit action=create date=2025-12-01
+python -m vault_parser edit --date 2025-12-01 --action create
 
-# Сон (partial update — только указанные поля)
-python -m vault_parser mode=edit action=set-sleep date=2025-12-01 sleep_quality=8 deep_sleep=true
+# Добавить задачу
+python -m vault_parser edit --date 2025-12-01 --action add-task --text "стендап" --section main
 
-# Энергия
-python -m vault_parser mode=edit action=set-energy date=2025-12-01 morning=7 evening=9
+# Изменить статус
+python -m vault_parser edit --date 2025-12-01 --action done --query "стендап"
+python -m vault_parser edit --date 2025-12-01 --action cancel --query "стендап"
+python -m vault_parser edit --date 2025-12-01 --action progress --query "стендап"
 
-# Добавить задачу с датами и рекурренцией
-python -m vault_parser mode=edit action=add-task date=2025-12-01 \
-  text=стендап start_date=2025-12-01 due_date=2025-06-30 \
-  "recurrence=every 2 weeks"
+# Показать список задач (превью для удаления)
+python -m vault_parser edit --date 2025-12-01 --action list
 
-# Пометить задачу как выполненную
-python -m vault_parser mode=edit action=done date=2025-12-01 query=стендап
+# Удалить задачу (сначала покажет совпадения, затем удалит первое)
+python -m vault_parser edit --date 2025-12-01 --action delete --query "стендап"
 
-# Отменить задачу
-python -m vault_parser mode=edit action=cancel date=2025-12-01 query=отчет
+# Прочитать заметку
+python -m vault_parser edit --date 2025-12-01 --action read
 
-# Прочитать заметку (JSON)
-python -m vault_parser mode=edit action=read date=2025-12-01
+# Сон, энергия, фокус
+python -m vault_parser edit --date 2025-12-01 --action set-sleep -o sleep_quality=8 -o deep_sleep=true
+python -m vault_parser edit --date 2025-12-01 --action set-energy -o morning=7 -o day_energy=8
+python -m vault_parser edit --date 2025-12-01 --action set-focus -o items="Модуль;Ревью"
 ```
 
-> **Примечание**: значения с запятыми нужно экранировать для Hydra: `"recurrence='every mon,wed,fri'"`
+### Пример: list → delete
+
+```
+> python -m vault_parser edit --date 2025-12-01 --action list
+Задачи в 2025-12-01 (3 шт.):
+
+    1. ☐ [high] стендап (Основные дела)
+    2. ✅ код ревью (Основные дела)
+    3. 🔄 написать тесты (Второстепенные задачи)
+
+> python -m vault_parser edit --date 2025-12-01 --action delete --query "стендап"
+Найдено совпадений: 1
+  → - [ ] 🔺 стендап 10:00-10:15 [[Илюхин Влад]]
+✅ Задача удалена из 2025-12-01
+```
 
 ### Python API
 
@@ -301,6 +315,14 @@ editor.add_task("2025-12-01", "стендап",
 
 # Статус
 editor.update_task_status("2025-12-01", "стендап", TaskStatus.DONE)
+
+# Просмотр задач
+tasks = editor.list_tasks("2025-12-01")
+for t in tasks:
+    print(f"{t.status.value}: {t.text}")
+
+# Удаление задачи
+editor.delete_task("2025-12-01", "стендап")
 
 # Секции
 editor.set_focus("2025-12-01", ["Написать модуль", "Провести ревью"])
@@ -499,29 +521,83 @@ overdue = overdue_tasks(tasks)
 
 ```
 vault_parser/
-├── __init__.py          # Публичное API
-├── __main__.py          # Hydra CLI entry point
-├── models.py            # Dataclass-модели (VaultTask, Recurrence, DayNote, ...)
-├── parser.py            # Regex-парсинг markdown + VaultParser facade
-├── people.py            # PeopleRegistry, Person, GroupMembership
-├── recurrence.py        # Движок рекурренции: next_occurrence, expand_occurrences
-├── filters.py           # Фильтрация задач по критериям
-├── formatters.py        # Table / JSON / CSV / Stats / People форматирование
-├── writer/              # Редактор дневных заметок
-│   ├── __init__.py      # re-export DailyNoteEditor
-│   ├── editor.py       # DailyNoteEditor (CRUD)
-│   ├── frontmatter.py  # YAML frontmatter сериализация
-│   ├── sections.py     # Markdown-секции заметок
-│   └── task_lines.py   # Форматирование строк задач
-├── conf/
-│   └── config.yaml      # Hydra-конфиг по умолчанию
-└── README.md            # ← вы здесь
+  __init__.py          # Публичное API
+  __main__.py          # Click CLI (list-tasks, search, stats, wellness, edit, ...)
+  schemas.py           # Pydantic-модели конфигурации
+  models.py            # Dataclass-модели (VaultTask, Recurrence, DayNote, ...)
+  parser.py            # Regex-парсинг markdown + VaultParser(BaseVaultParser)
+  people.py            # PeopleRegistry, Person, GroupMembership
+  recurrence.py        # Движок рекурренции
+  filters.py           # Фильтрация задач по критериям
+  formatters.py        # Table / JSON / CSV / Stats
+  containers.py        # DI-контейнер (dependency-injector)
+  writer/              # Редактор дневных заметок
+    editor.py          # DailyNoteEditor(BaseDailyNoteEditor, BaseWellnessEditor)
+    frontmatter.py     # YAML frontmatter сериализация
+    sections.py        # Markdown-секции заметок
+    task_lines.py      # Форматирование строк задач
+  conf/config.yaml     # YAML-конфиг по умолчанию
+  CONFIG.md            # Справка по параметрам
+  README.md
+
+interfaces/            # Абстрактные базовые классы (ABC)
+  base.py              # BaseVaultParser, BaseNoteEditor, BaseDailyNoteEditor,
+                       # BaseWellnessEditor, BaseEmbeddingProvider,
+                       # BaseGraphStore, BaseVectorStore
+  __init__.py          # Re-exports
+
+cli_base/              # Общий модуль для CLI
+  config_loader.py     # Hydra → pydantic bridge
+  common_commands.py   # validate, show-config
+  class_resolver.py    # resolve_class() — динамическая загрузка классов
+```
+
+### DI-контейнер и замена классов
+
+Классы `VaultParser` и `DailyNoteEditor` можно заменить через конфиг:
+
+```yaml
+# vault_parser/conf/config.yaml
+parser_class: vault_parser.parser.VaultParser
+editor_class: vault_parser.writer.editor.DailyNoteEditor
+```
+
+При инициализации контейнер:
+1. Читает `parser_class` / `editor_class` из конфига
+2. Вызывает `resolve_class(dotted_path, BaseVaultParser)` → проверяет `issubclass`
+3. Инстанцирует объект через `providers.Factory`
+4. Wiring: `@inject` + `Provide["parser"]` / `Provide["editor"]`
+
+```python
+# Пример своей реализации
+from interfaces import BaseDailyNoteEditor
+
+class MyCustomEditor(BaseDailyNoteEditor):
+    def exists(self, note_date): ...
+    def read(self, note_date): ...
+    def add_task(self, note_date, text, **kw): ...
+    def delete_task(self, note_date, query): ...
+    ...
+```
+
+```yaml
+# config.yaml
+editor_class: my_module.MyCustomEditor
+```
+
+### Иерархия ABC для редактора
+
+```
+BaseNoteEditor (ABC)                — exists / read / read_raw / create
+  └─ BaseDailyNoteEditor (ABC)      — add_task / update_task_status / list_tasks / delete_task
+       └─ DailyNoteEditor           — конкретная реализация
+
+BaseWellnessEditor (ABC, mixin)     — set_sleep / set_energy / set_focus / ...
 ```
 
 ---
 
 ## Ограничения
 
-- **Hydra + кириллица**: CLI-аргументы с кириллицей требуют config-overrides вместо CLI
 - **Месячные заметки**: не содержат чекбоксов — извлекается только текст секций
 - **YAML sexagesimal**: `sleep-duration: 6:30` автоматически конвертируется YAML в 390 — парсер обрабатывает это корректно
