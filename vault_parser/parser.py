@@ -742,7 +742,10 @@ def parse_monthly_note(file_path: Path) -> MonthlyNote | None:
 
 # ── Vault-level aggregation ──────────────────────────────────────────
 
-class VaultParser:
+from interfaces import BaseVaultParser
+
+
+class VaultParser(BaseVaultParser):
     """High-level facade for parsing an entire vault notes directory.
 
     Args:

@@ -6,6 +6,10 @@ vault:
   people_dir: "D:\\vault\\project_live\\people"
   template_path: "D:\\vault\\project_live\\zettelkasten\\templates\\t_daily.md"
 
+# Swappable class implementations
+parser_class: vault_parser.parser.VaultParser
+editor_class: vault_parser.writer.editor.DailyNoteEditor
+
 # Default mode and filter options (overridable from CLI)
 mode: "list-tasks"      # list-tasks | search | stats | wellness | people | edit | parse
 

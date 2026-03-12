@@ -27,10 +27,12 @@ from vault_parser.writer.task_lines import (
     format_task_line,
 )
 
+from interfaces import BaseDailyNoteEditor, BaseWellnessEditor
+
 logger = logging.getLogger(__name__)
 
 
-class DailyNoteEditor:
+class DailyNoteEditor(BaseDailyNoteEditor, BaseWellnessEditor):
     """Create, read, and update Obsidian daily notes.
 
     All write methods perform partial updates — only the specified fields
@@ -390,6 +392,46 @@ class DailyNoteEditor:
         if updated:
             path.write_text("\n".join(lines), encoding="utf-8")
         return updated
+
+    # ------------------------------------------------------------------
+    def list_tasks(self, note_date: str | date) -> list:
+        """List all tasks in a daily note.
+
+        Returns parsed VaultTask objects (with raw_line, section, etc.).
+        """
+        note = self.read(note_date)
+        if note is None:
+            raise FileNotFoundError(f"Note not found: {self._path(note_date)}")
+        return note.all_tasks
+
+    # ------------------------------------------------------------------
+    def delete_task(self, note_date: str | date, query: str) -> bool:
+        """Delete the first task whose line matches *query* (case-insensitive).
+
+        The entire checkbox line is removed from the file.
+        Returns True if a task was found and deleted.
+        """
+        path = self._path(note_date)
+        if not path.exists():
+            raise FileNotFoundError(f"Note not found: {path}")
+
+        text = path.read_text(encoding="utf-8")
+        lines = text.split("\n")
+        query_lower = query.lower()
+        deleted = False
+
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            m = CHECKBOX_RE.match(stripped)
+            if m and query_lower in stripped.lower():
+                logger.info("Deleting task line %d: %s", i + 1, stripped)
+                del lines[i]
+                deleted = True
+                break
+
+        if deleted:
+            path.write_text("\n".join(lines), encoding="utf-8")
+        return deleted
 
     # ── Internal helpers ─────────────────────────────────────────
 
