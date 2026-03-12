@@ -21,8 +21,9 @@ class LLMRelationExtractor(BaseRelationExtractor):
     """Extract relations (triples) using an LLM with Structured Output.
     """
 
-    def __init__(self, cfg: DictConfig, prompt_cfg: DictConfig) -> None:
+    def __init__(self, cfg: DictConfig, prompt_cfg: DictConfig, *, tracker=None) -> None:
         self._llm = _build_llm(cfg)
+        self._tracker = tracker
         self._structured_llm = self._llm.with_structured_output(RelationListSO)
         
         self._max_relations: int = cfg.get("max_relations", 20)
@@ -69,6 +70,8 @@ class LLMRelationExtractor(BaseRelationExtractor):
         try:
             # 1. Try primary structured output
             result: RelationListSO = self._structured_llm.invoke(prompt)
+            if self._tracker and hasattr(result, 'response_metadata'):
+                self._tracker.track(result, "relation_extractor")
             if result and result.relations:
                 return self._parse_so_result(result, chunk_id)
             
@@ -81,6 +84,8 @@ class LLMRelationExtractor(BaseRelationExtractor):
     def _manual_fallback(self, prompt: str, chunk_id: str) -> list[Relation]:
         try:
             raw_response = self._llm.invoke(prompt)
+            if self._tracker:
+                self._tracker.track(raw_response, "relation_extractor")
             content = raw_response.content if hasattr(raw_response, "content") else str(raw_response)
             clean_content = self._clean_json_text(content)
             

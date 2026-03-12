@@ -17,12 +17,14 @@ class LLMKeywordRefiner(BaseKeywordRefiner):
     different models (gemma3, qwen3, etc.).
     """
 
-    def __init__(self, cfg: DictConfig, prompt_cfg: DictConfig) -> None:
+    def __init__(self, cfg: DictConfig, prompt_cfg: DictConfig, *, tracker=None) -> None:
         self._llm = _build_llm(cfg)
+        self._tracker = tracker
         self._template: str = prompt_cfg.get(
             "template",
-            "У тебя есть сырой список ключевых слов. Объедини синонимы и исправь категории.\nСырые слова: {raw_keywords}",
+            "Объедини и уточни ключевые слова:\n{raw_keywords}"
         )
+        self._prompt_version: str = prompt_cfg.get("version", "1.0")
         logger.info("LLMKeywordRefiner ready")
 
     # ── Public API ────────────────────────────────────────────
@@ -102,6 +104,8 @@ class LLMKeywordRefiner(BaseKeywordRefiner):
 
         try:
             response = self._llm.invoke(prompt)
+            if self._tracker:
+                self._tracker.track(response, "keyword_refiner")
             content = response.content if hasattr(response, "content") else str(response)
             logger.debug(
                 "Refiner raw LLM response (%d chars): %.500s",

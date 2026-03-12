@@ -25,6 +25,7 @@ from raptor_pipeline.knowledge_graph.link_parser import (
     parse_article_version,
     ExtractedLink,
 )
+from raptor_pipeline.token_tracker import TokenTracker
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,10 @@ class RaptorPipeline:
         graph_store=None,
     ) -> None:
         self.cfg = cfg
+        self._token_tracker = TokenTracker()
+        self._token_output_path: str = getattr(
+            cfg, "token_output_path", "outputs/token_usage.csv"
+        )
 
         # Embedding provider (shared by chunker, RAPTOR, stores)
         if embedder is not None:
@@ -78,7 +83,10 @@ class RaptorPipeline:
         if summarizer is not None:
             self._summarizer = summarizer
         else:
-            self._summarizer = LLMSummarizer(cfg.summarizer, cfg.prompts.summarize)
+            self._summarizer = LLMSummarizer(
+                cfg.summarizer, cfg.prompts.summarize,
+                tracker=self._token_tracker,
+            )
 
         # RAPTOR tree builder
         self._tree_builder = RaptorTreeBuilder(
@@ -90,19 +98,22 @@ class RaptorPipeline:
             self._kw_extractor = kw_extractor
         else:
             self._kw_extractor = LLMKeywordExtractor(
-                cfg.knowledge_graph, cfg.prompts.keywords
+                cfg.knowledge_graph, cfg.prompts.keywords,
+                tracker=self._token_tracker,
             )
         if kw_refiner is not None:
             self._kw_refiner = kw_refiner
         else:
             self._kw_refiner = LLMKeywordRefiner(
-                cfg.knowledge_graph, cfg.prompts.refine_keywords
+                cfg.knowledge_graph, cfg.prompts.refine_keywords,
+                tracker=self._token_tracker,
             )
         if rel_extractor is not None:
             self._rel_extractor = rel_extractor
         else:
             self._rel_extractor = LLMRelationExtractor(
-                cfg.knowledge_graph, cfg.prompts.relations
+                cfg.knowledge_graph, cfg.prompts.relations,
+                tracker=self._token_tracker,
             )
 
         # Stores
@@ -490,6 +501,14 @@ class RaptorPipeline:
             logger.info("  + Stored %d cross-article links in Neo4j", len(unique_links))
         logger.info("  + Stored KG in Neo4j")
 
+        # ── Step 7: Token usage tracking ──────────────────────
+        self._token_tracker.log_summary(article_id)
+        self._token_tracker.save_csv(
+            self._token_output_path, article_id, article_name,
+        )
+        token_usage = self._token_tracker.summary_dict()
+        self._token_tracker.reset()
+
         return {
             "article_id": article_id,
             "article_name": article_name,
@@ -510,6 +529,7 @@ class RaptorPipeline:
                 for lnk in unique_links
             ],
             "article_summary": article_summary[:200] + "..." if len(article_summary) > 200 else article_summary,
+            "token_usage": token_usage,
         }
 
     # ------------------------------------------------------------------

@@ -59,8 +59,9 @@ class LLMSummarizer(BaseSummarizer):
     ``prompts.summarize``.
     """
 
-    def __init__(self, cfg: DictConfig, prompt_cfg: DictConfig) -> None:
+    def __init__(self, cfg: DictConfig, prompt_cfg: DictConfig, *, tracker=None) -> None:
         self._llm = _build_llm(cfg)
+        self._tracker = tracker
         self._template: str = prompt_cfg.get(
             "template",
             (
@@ -81,6 +82,8 @@ class LLMSummarizer(BaseSummarizer):
         combined = "\n---\n".join(texts)
         prompt = self._template.replace("{text}", combined)
         response = self._llm.invoke(prompt)
+        if self._tracker:
+            self._tracker.track(response, "summarizer")
         # LangChain ChatModel returns AIMessage; plain LLM returns str
         if hasattr(response, "content"):
             return response.content.strip()
