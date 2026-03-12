@@ -41,23 +41,44 @@ class RaptorPipeline:
       6. Store knowledge graph in Neo4j
     """
 
-    def __init__(self, cfg: DictConfig) -> None:
+    def __init__(
+        self,
+        cfg: DictConfig,
+        *,
+        embedder=None,
+        chunker=None,
+        summarizer=None,
+        kw_extractor=None,
+        kw_refiner=None,
+        rel_extractor=None,
+        vector_store=None,
+        graph_store=None,
+    ) -> None:
         self.cfg = cfg
 
         # Embedding provider (shared by chunker, RAPTOR, stores)
-        self._embedder = create_embedding_provider(cfg.embeddings)
+        if embedder is not None:
+            self._embedder = embedder
+        else:
+            self._embedder = create_embedding_provider(cfg.embeddings)
 
         # Chunker
-        chunker_type = cfg.chunker.get("type", "section")
-        if chunker_type == "semantic":
-            self._chunker = SemanticChunker(cfg.chunker, self._embedder)
-        elif chunker_type == "hybrid":
-            self._chunker = HybridChunker(cfg.chunker, self._embedder)
+        if chunker is not None:
+            self._chunker = chunker
         else:
-            self._chunker = SectionChunker(cfg.chunker)
+            chunker_type = cfg.chunker.get("type", "section")
+            if chunker_type == "semantic":
+                self._chunker = SemanticChunker(cfg.chunker, self._embedder)
+            elif chunker_type == "hybrid":
+                self._chunker = HybridChunker(cfg.chunker, self._embedder)
+            else:
+                self._chunker = SectionChunker(cfg.chunker)
 
         # Summariser
-        self._summarizer = LLMSummarizer(cfg.summarizer, cfg.prompts.summarize)
+        if summarizer is not None:
+            self._summarizer = summarizer
+        else:
+            self._summarizer = LLMSummarizer(cfg.summarizer, cfg.prompts.summarize)
 
         # RAPTOR tree builder
         self._tree_builder = RaptorTreeBuilder(
@@ -65,20 +86,34 @@ class RaptorPipeline:
         )
 
         # Knowledge graph extractors
-        self._kw_extractor = LLMKeywordExtractor(
-            cfg.knowledge_graph, cfg.prompts.keywords
-        )
-        self._kw_refiner = LLMKeywordRefiner(
-            cfg.knowledge_graph, cfg.prompts.refine_keywords
-        )
-        self._rel_extractor = LLMRelationExtractor(
-            cfg.knowledge_graph, cfg.prompts.relations
-        )
+        if kw_extractor is not None:
+            self._kw_extractor = kw_extractor
+        else:
+            self._kw_extractor = LLMKeywordExtractor(
+                cfg.knowledge_graph, cfg.prompts.keywords
+            )
+        if kw_refiner is not None:
+            self._kw_refiner = kw_refiner
+        else:
+            self._kw_refiner = LLMKeywordRefiner(
+                cfg.knowledge_graph, cfg.prompts.refine_keywords
+            )
+        if rel_extractor is not None:
+            self._rel_extractor = rel_extractor
+        else:
+            self._rel_extractor = LLMRelationExtractor(
+                cfg.knowledge_graph, cfg.prompts.relations
+            )
 
         # Stores
-        self._vector_store = QdrantVectorStore(cfg.stores.qdrant)
-        self._graph_store = Neo4jGraphStore(cfg.stores.neo4j)
-
+        if vector_store is not None:
+            self._vector_store = vector_store
+        else:
+            self._vector_store = QdrantVectorStore(cfg.stores.qdrant)
+        if graph_store is not None:
+            self._graph_store = graph_store
+        else:
+            self._graph_store = Neo4jGraphStore(cfg.stores.neo4j)
 
         # Parallelism & batching
         self._max_workers: int = cfg.get("max_concurrency", 8)

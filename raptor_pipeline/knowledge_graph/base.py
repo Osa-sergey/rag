@@ -1,10 +1,20 @@
-"""Data models and abstract bases for knowledge graph extraction."""
+"""Data models and abstract bases for knowledge graph extraction.
+
+BaseKeywordExtractor, BaseKeywordRefiner, BaseRelationExtractor ABCs
+are re-exported from ``interfaces`` (canonical location).
+Data models (Keyword, Relation, pydantic SO models) stay here.
+"""
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List
 from pydantic import BaseModel, Field
+
+from interfaces import (  # noqa: F401  — canonical ABCs
+    BaseKeywordExtractor,
+    BaseKeywordRefiner,
+    BaseRelationExtractor,
+)
 
 
 class KeywordSO(BaseModel):
@@ -77,21 +87,3 @@ class Relation:
     object: str
     confidence: float = 1.0
     chunk_id: str = ""
-
-
-class BaseKeywordExtractor(ABC):
-    @abstractmethod
-    def extract(self, text: str, chunk_id: str = "") -> list[Keyword]:
-        ...
-
-
-class BaseRelationExtractor(ABC):
-    @abstractmethod
-    def extract(
-        self,
-        text: str,
-        keywords: list[Keyword],
-        chunk_id: str = "",
-    ) -> list[Relation]:
-        """Extract relations, using *keywords* as context hints."""
-        ...

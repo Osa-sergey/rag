@@ -3,12 +3,13 @@ import logging
 import re
 from omegaconf import DictConfig
 
+from raptor_pipeline.knowledge_graph.base import BaseKeywordRefiner
 from raptor_pipeline.summarizer.llm_summarizer import _build_llm
 
 logger = logging.getLogger(__name__)
 
 
-class LLMKeywordRefiner:
+class LLMKeywordRefiner(BaseKeywordRefiner):
     """Refine keywords: merge synonyms, fix categories.
 
     Uses a single raw LLM call (no structured output) with robust
