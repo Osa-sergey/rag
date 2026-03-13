@@ -12,67 +12,87 @@ Features:
 from __future__ import annotations
 
 from dependency_injector import containers, providers
+from omegaconf import OmegaConf, DictConfig
+from pydantic import BaseModel
 
 from cli_base.class_resolver import resolve_class
 from raptor_pipeline.schemas import RaptorPipelineConfig
+
+
+def _to_dictconfig(obj) -> DictConfig:
+    """Convert a Pydantic model (or sub-config) to OmegaConf DictConfig.
+
+    Components (providers, summarizer, tree_builder, etc.) use
+    ``cfg.get(key, default)`` which is an OmegaConf API.  When configs
+    come from the Click+Hydra+Pydantic pipeline they are Pydantic models,
+    so we must convert at the DI boundary.
+    """
+    if isinstance(obj, DictConfig):
+        return obj
+    if isinstance(obj, BaseModel):
+        return OmegaConf.create(obj.model_dump(by_alias=True))
+    if isinstance(obj, dict):
+        return OmegaConf.create(obj)
+    return obj
 
 
 def _create_embedding_provider(cfg: RaptorPipelineConfig):
     """Resolve embedding provider class from config and instantiate."""
     from interfaces import BaseEmbeddingProvider
     cls = resolve_class(cfg.embeddings.class_, BaseEmbeddingProvider)
-    return cls(cfg.embeddings)
+    return cls(_to_dictconfig(cfg.embeddings))
 
 
 def _create_graph_store(cfg: RaptorPipelineConfig):
     """Resolve graph store class from config and instantiate."""
     from interfaces import BaseGraphStore
     cls = resolve_class(cfg.stores.neo4j.class_, BaseGraphStore)
-    return cls(cfg.stores.neo4j)
+    return cls(_to_dictconfig(cfg.stores.neo4j))
 
 
 def _create_vector_store(cfg: RaptorPipelineConfig):
     """Create Qdrant vector store from config."""
     from stores.vector_store import QdrantVectorStore
-    return QdrantVectorStore(cfg.stores.qdrant)
+    return QdrantVectorStore(_to_dictconfig(cfg.stores.qdrant))
 
 
 def _create_chunker(cfg: RaptorPipelineConfig, embedder):
     """Create chunker based on 'type' field."""
     chunker_type = cfg.chunker.type
+    chunker_cfg = _to_dictconfig(cfg.chunker)
     if chunker_type == "semantic":
         from raptor_pipeline.chunker.semantic_chunker import SemanticChunker
-        return SemanticChunker(cfg.chunker, embedder)
+        return SemanticChunker(chunker_cfg, embedder)
     elif chunker_type == "hybrid":
         from raptor_pipeline.chunker.hybrid_chunker import HybridChunker
-        return HybridChunker(cfg.chunker, embedder)
+        return HybridChunker(chunker_cfg, embedder)
     else:
         from raptor_pipeline.chunker.section_chunker import SectionChunker
-        return SectionChunker(cfg.chunker)
+        return SectionChunker(chunker_cfg)
 
 
 def _create_summarizer(cfg: RaptorPipelineConfig):
     """Create LLM summarizer."""
     from raptor_pipeline.summarizer.llm_summarizer import LLMSummarizer
-    return LLMSummarizer(cfg.summarizer, cfg.prompts.summarize)
+    return LLMSummarizer(_to_dictconfig(cfg.summarizer), _to_dictconfig(cfg.prompts.summarize))
 
 
 def _create_kw_extractor(cfg: RaptorPipelineConfig):
     """Create keyword extractor."""
     from raptor_pipeline.knowledge_graph.keyword_extractor import LLMKeywordExtractor
-    return LLMKeywordExtractor(cfg.knowledge_graph, cfg.prompts.keywords)
+    return LLMKeywordExtractor(_to_dictconfig(cfg.knowledge_graph), _to_dictconfig(cfg.prompts.keywords))
 
 
 def _create_kw_refiner(cfg: RaptorPipelineConfig):
     """Create keyword refiner."""
     from raptor_pipeline.knowledge_graph.keyword_refiner import LLMKeywordRefiner
-    return LLMKeywordRefiner(cfg.knowledge_graph, cfg.prompts.refine_keywords)
+    return LLMKeywordRefiner(_to_dictconfig(cfg.knowledge_graph), _to_dictconfig(cfg.prompts.refine_keywords))
 
 
 def _create_rel_extractor(cfg: RaptorPipelineConfig):
     """Create relation extractor."""
     from raptor_pipeline.knowledge_graph.relation_extractor import LLMRelationExtractor
-    return LLMRelationExtractor(cfg.knowledge_graph, cfg.prompts.relations)
+    return LLMRelationExtractor(_to_dictconfig(cfg.knowledge_graph), _to_dictconfig(cfg.prompts.relations))
 
 
 def _create_pipeline(cfg, embedder, chunker, summarizer,
@@ -81,7 +101,7 @@ def _create_pipeline(cfg, embedder, chunker, summarizer,
     """Assemble the full pipeline with all injected dependencies."""
     from raptor_pipeline.pipeline import RaptorPipeline
     return RaptorPipeline(
-        cfg,
+        _to_dictconfig(cfg),
         embedder=embedder,
         chunker=chunker,
         summarizer=summarizer,
