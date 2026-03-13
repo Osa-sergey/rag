@@ -1,0 +1,72 @@
+# Expense categories with example descriptions
+# Used for embedding-based classification
+# ──────────────────────────────────────────────────────────────
+
+items:
+  - name: food
+    display_name: Еда
+    examples:
+      - обед в кафе
+      - продукты в магазине
+      - ужин в ресторане
+      - кофе
+      - завтрак
+      - доставка еды
+
+  - name: transport
+    display_name: Транспорт
+    examples:
+      - такси
+      - метро
+      - бензин
+      - каршеринг
+      - автобус
+      - парковка
+
+  - name: entertainment
+    display_name: Развлечения
+    examples:
+      - кино
+      - концерт
+      - бар
+      - игры
+      - подписка на стриминг
+
+  - name: clothing
+    display_name: Одежда
+    examples:
+      - футболка
+      - джинсы
+      - кроссовки
+      - куртка
+
+  - name: health
+    display_name: Здоровье
+    examples:
+      - аптека
+      - врач
+      - анализы
+      - стоматолог
+      - лекарства
+
+  - name: communication
+    display_name: Связь
+    examples:
+      - мобильная связь
+      - интернет
+      - оплата телефона
+
+  - name: housing
+    display_name: Жильё
+    examples:
+      - аренда квартиры
+      - коммунальные услуги
+      - ремонт
+      - мебель
+
+  - name: other
+    display_name: Другое
+    examples:
+      - подарок
+      - штраф
+      - прочие расходы

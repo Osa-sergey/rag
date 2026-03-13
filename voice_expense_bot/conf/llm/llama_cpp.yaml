@@ -1,0 +1,16 @@
+# LLM: llama.cpp Server (OpenAI-compatible)
+# ──────────────────────────────────────────────────────────────
+
+provider: llama_cpp
+
+# Model name (for logging; llama-server ignores this)
+model_name: gemma-3-12b-it
+
+# llama-server URL
+base_url: http://localhost:8080/v1
+
+# Low temperature for structured extraction
+temperature: 0.1
+
+# Max tokens in response
+max_tokens: 2048

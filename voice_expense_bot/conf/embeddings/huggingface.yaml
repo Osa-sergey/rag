@@ -1,0 +1,18 @@
+# Embeddings: HuggingFace (BERTA)
+# sergeyzh/BERTA — русско-английская модель, 768d
+# ──────────────────────────────────────────────────────────────
+
+provider: huggingface
+
+model_name: sergeyzh/BERTA
+
+# Local path (if available, loads without internet)
+local_path: D:/models/BERTA
+
+embedding_dim: 768
+
+model_kwargs:
+  device: mps
+
+encode_kwargs:
+  normalize_embeddings: true

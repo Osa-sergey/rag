@@ -1,0 +1,15 @@
+# Transcriber: GigaAM + Silero VAD
+# ──────────────────────────────────────────────────────────────
+
+# GigaAM model variant
+# Options: v3_e2e_rnnt, v3_ctc, v2_rnnt, v2_ctc, v1_rnnt, v1_ctc
+model_name: v3_e2e_rnnt
+
+# Use Silero VAD for long-form audio segmentation
+use_vad: true
+
+# Silero VAD speech probability threshold
+vad_threshold: 0.5
+
+# Audio shorter than this (seconds) uses short-form transcription
+max_short_duration: 25.0

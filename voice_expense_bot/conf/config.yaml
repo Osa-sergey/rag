@@ -1,0 +1,17 @@
+# ===============================================================
+# Voice Expense Bot — Master Configuration
+# ===============================================================
+# python -m voice_expense_bot
+# python -m voice_expense_bot telegram.bot_token=YOUR_TOKEN
+# ===============================================================
+
+defaults:
+  - transcriber: gigaam
+  - llm: llama_cpp
+  - embeddings: huggingface
+  - database: postgresql
+  - categories: default
+  - telegram: default
+  - _self_
+
+log_level: INFO
