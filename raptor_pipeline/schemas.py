@@ -167,6 +167,14 @@ class RaptorPipelineConfig(BaseModel):
     article_id: Optional[str] = None
     word: Optional[str] = None
 
+    @field_validator("article_id", "input_file", mode="before")
+    @classmethod
+    def _coerce_to_str(cls, v):
+        """Hydra parses numeric CLI values as int; coerce to str."""
+        if v is not None:
+            return str(v)
+        return v
+
     # Sub-configs
     chunker: ChunkerConfig = Field(default_factory=ChunkerConfig)
     embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
