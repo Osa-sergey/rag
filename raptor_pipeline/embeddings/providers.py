@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 
 from omegaconf import DictConfig
 
@@ -94,10 +95,13 @@ class HuggingFaceEmbeddingProvider(BaseEmbeddingProvider):
             encode_kwargs=cfg.get("encode_kwargs", {"normalize_embeddings": True}),
         )
         self._embedding_dim: int = cfg.get("embedding_dim", 384)
+        self._batch_size: int = cfg.get("embed_batch_size", 32)
+        self._lock = threading.Lock()
         logger.info(
-            "HuggingFaceEmbeddingProvider initialised (model=%s, dim=%d)",
+            "HuggingFaceEmbeddingProvider initialised (model=%s, dim=%d, batch=%d)",
             model_id,
             self._embedding_dim,
+            self._batch_size,
         )
 
     @property
@@ -105,7 +109,21 @@ class HuggingFaceEmbeddingProvider(BaseEmbeddingProvider):
         return self._embedding_dim
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        return self._model.embed_documents(texts)
+        """Embed texts in batches to avoid GPU OOM on large articles.
+
+        Uses a lock to serialise GPU access — MPS does not support
+        concurrent operations from multiple threads.
+        """
+        if len(texts) <= self._batch_size:
+            with self._lock:
+                return self._model.embed_documents(texts)
+
+        all_embeddings: list[list[float]] = []
+        for i in range(0, len(texts), self._batch_size):
+            batch = texts[i : i + self._batch_size]
+            with self._lock:
+                all_embeddings.extend(self._model.embed_documents(batch))
+        return all_embeddings
 
     def embed_query(self, text: str) -> list[float]:
         return self._model.embed_query(text)
