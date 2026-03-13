@@ -59,8 +59,8 @@ def _fix_cyrillic_args():
 _fix_cyrillic_args()
 
 
-@hydra.main(config_path="conf", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
+    """Core inspect-graph logic, callable from Click or standalone."""
     # 1. Connect to Neo4j
     n_cfg = cfg.stores.neo4j
     driver = GraphDatabase.driver(n_cfg.uri, auth=(n_cfg.user, n_cfg.password))
@@ -206,5 +206,9 @@ def main(cfg: DictConfig) -> None:
 
     driver.close()
 
+@hydra.main(config_path="conf", config_name="config", version_base=None)
+def _hydra_main(cfg: DictConfig) -> None:
+    main(cfg)
+
 if __name__ == "__main__":
-    main()
+    _hydra_main()

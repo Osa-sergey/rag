@@ -38,8 +38,8 @@ def print_tree(nodes: dict, node_id: str, indent: str = "", is_last: bool = True
     for i, child_id in enumerate(children):
         print_tree(nodes, child_id, new_indent, i == len(children) - 1, show_full_text)
 
-@hydra.main(config_path="conf", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
+    """Core inspect-tree logic, callable from Click or standalone."""
     client = QdrantClient(
         host=cfg.stores.qdrant.get("host", "localhost"),
         port=cfg.stores.qdrant.get("port", 6333),
@@ -169,5 +169,9 @@ def main(cfg: DictConfig) -> None:
     except Exception as exc:
         print(f"\n(Не удалось загрузить саммари из Neo4j: {exc})")
 
+@hydra.main(config_path="conf", config_name="config", version_base=None)
+def _hydra_main(cfg: DictConfig) -> None:
+    main(cfg)
+
 if __name__ == "__main__":
-    main()
+    _hydra_main()

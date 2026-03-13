@@ -116,5 +116,147 @@ def run(input_dir, input_file, override):
     _do_run(cfg)
 
 
+# ── inspect-tree ──────────────────────────────────────────────
+
+def _list_articles_qdrant(cfg: RaptorPipelineConfig) -> None:
+    """Show all article_ids available in Qdrant."""
+    from qdrant_client import QdrantClient
+
+    client = QdrantClient(host=cfg.stores.qdrant.host, port=cfg.stores.qdrant.port)
+    collection = cfg.stores.qdrant.collection_name
+
+    points, _ = client.scroll(
+        collection_name=collection,
+        with_payload=["article_id"],
+        with_vectors=False,
+        limit=10_000,
+    )
+    article_ids: dict[str, int] = {}
+    for p in points:
+        aid = p.payload.get("article_id", "?")
+        article_ids[aid] = article_ids.get(aid, 0) + 1
+
+    if not article_ids:
+        click.echo("Нет данных в Qdrant.")
+        return
+
+    click.echo(f"\nСтатьи в Qdrant (коллекция '{collection}'):")
+    click.echo("=" * 50)
+    for aid in sorted(article_ids):
+        click.echo(f"  {aid}  ({article_ids[aid]} nodes)")
+    click.echo("=" * 50)
+    click.echo(f"Всего: {len(article_ids)} статей, {sum(article_ids.values())} nodes")
+
+
+def _list_articles_neo4j(cfg: RaptorPipelineConfig) -> None:
+    """Show all articles available in Neo4j."""
+    from neo4j import GraphDatabase
+
+    n_cfg = cfg.stores.neo4j
+    driver = GraphDatabase.driver(n_cfg.uri, auth=(n_cfg.user, n_cfg.password))
+
+    with driver.session(database=n_cfg.database) as session:
+        result = session.run(
+            "MATCH (a:Article) "
+            "OPTIONAL MATCH (a)-[r:HAS_KEYWORD]->(k:Keyword) "
+            "RETURN a.id AS id, a.article_name AS name, "
+            "       a.summary IS NOT NULL AS has_summary, "
+            "       count(DISTINCT k) AS kw_count "
+            "ORDER BY a.id"
+        )
+        articles = list(result)
+
+    driver.close()
+
+    if not articles:
+        click.echo("Нет статей в Neo4j.")
+        return
+
+    click.echo(f"\nСтатьи в Neo4j:")
+    click.echo("=" * 60)
+    for art in articles:
+        name = art.get("name") or ""
+        name_str = f"  ({name})" if name else ""
+        summary_flag = " 📋" if art.get("has_summary") else ""
+        kw_count = art.get("kw_count", 0)
+        click.echo(f"  {art['id']}{name_str}  — {kw_count} keywords{summary_flag}")
+    click.echo("=" * 60)
+    click.echo(f"Всего: {len(articles)} статей")
+
+
+@cli.command("inspect-tree")
+@click.option("--article-id", default=None, help="Фильтр по article_id")
+@click.option("--full-text", is_flag=True, help="Показать полный текст нод")
+@click.option("--list-articles", is_flag=True, help="Показать список статей в хранилищах")
+@click.option("--override", "-o", multiple=True, help="Hydra override (key=value)")
+def inspect_tree(article_id, full_text, list_articles, override):
+    """Визуализация RAPTOR-дерева из Qdrant.
+
+    \\b
+    Примеры:
+      python -m raptor_pipeline inspect-tree
+      python -m raptor_pipeline inspect-tree --article-id 986380
+      python -m raptor_pipeline inspect-tree --full-text
+      python -m raptor_pipeline inspect-tree --list-articles
+    """
+    overrides = {}
+    if article_id is not None:
+        overrides["article_id"] = str(article_id)
+    if full_text:
+        overrides["full_text"] = "true"
+
+    cfg = load_config(CONFIG_DIR, CONFIG_NAME, RaptorPipelineConfig,
+                      overrides=override, **overrides)
+
+    if list_articles:
+        _list_articles_qdrant(cfg)
+        return
+
+    # Delegate to existing inspect_tree logic
+    from raptor_pipeline.inspect_tree import main as _inspect_tree_main
+    from omegaconf import OmegaConf, DictConfig as OmegaDictConfig
+
+    # Convert pydantic config back to OmegaConf DictConfig for inspect_tree
+    raw = cfg.model_dump(by_alias=True)
+    omegacfg = OmegaConf.create(raw)
+    _inspect_tree_main(omegacfg)
+
+
+# ── inspect-graph ─────────────────────────────────────────────
+
+@cli.command("inspect-graph")
+@click.option("--word", "-w", default=None, help="Ключевое слово для инспекции")
+@click.option("--list-articles", is_flag=True, help="Показать список статей в хранилищах")
+@click.option("--override", "-o", multiple=True, help="Hydra override (key=value)")
+def inspect_graph(word, list_articles, override):
+    """Просмотр Knowledge Graph (Neo4j) с текстами из Qdrant.
+
+    \\b
+    Примеры:
+      python -m raptor_pipeline inspect-graph
+      python -m raptor_pipeline inspect-graph --word оптимизация
+      python -m raptor_pipeline inspect-graph --list-articles
+    """
+    overrides = {}
+    if word is not None:
+        overrides["word"] = word
+
+    cfg = load_config(CONFIG_DIR, CONFIG_NAME, RaptorPipelineConfig,
+                      overrides=override, **overrides)
+
+    if list_articles:
+        _list_articles_neo4j(cfg)
+        return
+
+    # Delegate to existing inspect_graph logic
+    from raptor_pipeline.inspect_graph import main as _inspect_graph_main
+    from omegaconf import OmegaConf
+
+    raw = cfg.model_dump(by_alias=True)
+    omegacfg = OmegaConf.create(raw)
+    _inspect_graph_main(omegacfg)
+
+
 if __name__ == "__main__":
     cli()
+
