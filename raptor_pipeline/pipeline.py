@@ -470,6 +470,13 @@ class RaptorPipeline:
                     n.node_id, len(n.text),
                 )
 
+        # Token-aware summarization parameters
+        summary_max_tokens: int = self.cfg.raptor.get("summary_max_tokens", 3500)
+        overflow_strategy: str = self.cfg.raptor.get(
+            "summary_overflow_strategy", "multi_stage",
+        )
+        chars_per_token: float = self.cfg.raptor.get("chars_per_token", 2.5)
+
         if len(all_summary_parts) == 1:
             article_summary = all_summary_parts[0]
         elif all_summary_parts:
@@ -477,7 +484,36 @@ class RaptorPipeline:
                 "  + Summarizing %d sources into final article summary...",
                 len(all_summary_parts),
             )
-            article_summary = self._summarizer.summarize(all_summary_parts)
+            article_summary = self._summarizer.summarize_token_aware(
+                all_summary_parts,
+                max_tokens=summary_max_tokens,
+                overflow_strategy=overflow_strategy,
+                chars_per_token=chars_per_token,
+            )
+
+            # levels_only fallback: summarize_token_aware returns None
+            # when overflow_strategy == "levels_only" and text is too long.
+            # Retry with only L1–LN summary nodes (no orphan leaves).
+            if article_summary is None and summary_texts:
+                logger.info(
+                    "  + Levels-only fallback: retrying with %d "
+                    "L1+ summary nodes (dropping %d orphan leaves)",
+                    len(summary_texts), len(orphan_leaf_nodes),
+                )
+                article_summary = self._summarizer.summarize_token_aware(
+                    summary_texts,
+                    max_tokens=summary_max_tokens,
+                    overflow_strategy="multi_stage",  # force multi_stage on retry
+                    chars_per_token=chars_per_token,
+                )
+
+            if article_summary is None:
+                # Last resort: concatenate available summaries
+                logger.warning(
+                    "  ! Could not produce article summary within token "
+                    "budget; using concatenated L1+ texts"
+                )
+                article_summary = "\n\n".join(summary_texts) if summary_texts else ""
         else:
             article_summary = ""
 
