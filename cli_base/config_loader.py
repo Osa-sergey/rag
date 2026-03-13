@@ -38,7 +38,13 @@ def load_config(
     hydra_overrides = list(overrides)
     for key, value in click_overrides.items():
         if value is not None:
-            hydra_overrides.append(f"{key}={value}")
+            str_val = str(value)
+            # Quote values with spaces or non-ASCII chars for Hydra lexer
+            needs_quoting = " " in str_val or any(ord(c) > 127 for c in str_val)
+            if needs_quoting:
+                hydra_overrides.append(f"{key}='{str_val}'")
+            else:
+                hydra_overrides.append(f"{key}={str_val}")
 
     config_dir = str(Path(config_dir).resolve())
     with initialize_config_dir(config_dir=config_dir, version_base=None):
