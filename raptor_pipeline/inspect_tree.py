@@ -49,6 +49,8 @@ def main(cfg: DictConfig) -> None:
     print(f"Fetching nodes from collection '{collection}'...")
     
     article_id = cfg.get("article_id", None)
+    if article_id is not None:
+        article_id = str(article_id)  # Hydra may parse numeric IDs as int
     
     scroll_filter = None
     if article_id:
