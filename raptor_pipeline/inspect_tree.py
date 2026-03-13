@@ -73,6 +73,16 @@ def main(cfg: DictConfig) -> None:
     
     if not points:
         print("No points found in collection.")
+        if article_id:
+            # Debug: show what article_ids actually exist
+            sample, _ = client.scroll(
+                collection_name=collection,
+                with_payload=["article_id"],
+                with_vectors=False,
+                limit=20,
+            )
+            existing_ids = {p.payload.get("article_id", "?") for p in sample}
+            print(f"  (existing article_ids sample: {existing_ids})")
         return
 
     # Map nodes by their node_id
@@ -98,13 +108,16 @@ def main(cfg: DictConfig) -> None:
             
     roots = [
         node_id for node_id, node in nodes_map.items() 
-        if node_id not in all_children and node.get("level", 0) > 0
+        if node_id not in all_children
     ]
     
-    # If no hierarchy found (v0 only), just show leaves or highest level
+    # If no roots found at all, fallback to highest-level nodes
     if not roots:
         max_level = max(n.get("level", 0) for n in nodes_map.values())
         roots = [nid for nid, n in nodes_map.items() if n.get("level", 0) == max_level]
+
+    # Sort roots: summaries first (descending by level), then leaves
+    roots.sort(key=lambda nid: -nodes_map[nid].get("level", 0))
 
     show_full_text = cfg.get("full_text", False)
     
