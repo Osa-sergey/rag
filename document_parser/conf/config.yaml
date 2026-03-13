@@ -1,0 +1,25 @@
+# ===============================================================
+# Document Parser — Configuration
+# ===============================================================
+# Переопределяйте значения через CLI:
+#   python -m document_parser parse-csv -o "html_column=body_html"
+#   python -m document_parser parse-md --input-file note.md
+# ===============================================================
+
+defaults:
+  - _self_
+
+# Директория для выходных YAML-файлов (результат парсинга)
+output_dir: parsed_yaml
+
+# Входной файл (CSV / Markdown / YAML — зависит от команды)
+input_file: null
+
+# Колонка с HTML-контентом при парсинге CSV
+html_column: content_html
+
+# Директория для извлечённых ассетов (images / links)
+assets_dir: assets
+
+# Уровень логирования
+log_level: INFO
