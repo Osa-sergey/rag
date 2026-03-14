@@ -1,0 +1,104 @@
+# Concept Builder — Hydra root config
+defaults:
+  - _self_
+
+log_level: INFO
+
+# ── Thresholds ────────────────────────────────────────────────
+similarity_threshold: 0.85     # cosine ≥ 0.85 → same Concept
+min_keyword_confidence: 0.8    # only keywords with confidence ≥ 0.8
+max_prompt_tokens: 3000        # limit LLM prompt length
+
+# ── Traversal defaults ───────────────────────────────────────
+default_strategy: bfs          # bfs | dfs
+default_max_articles: 20
+
+# ── LLM (for descriptions, summaries, relations) ─────────────
+llm:
+  provider: llama_cpp
+  model_name: gemma-3-12b-it
+  base_url: http://localhost:8080/v1
+  api_key: null
+  temperature: 0.3
+  max_tokens: 2048
+
+# ── Embeddings ────────────────────────────────────────────────
+embeddings:
+  class_: raptor_pipeline.embeddings.providers.HuggingFaceEmbeddingProvider
+  provider: huggingface
+  model_name: sergeyzh/BERTA
+  embedding_dim: 768
+  model_kwargs:
+    device: cpu
+  encode_kwargs:
+    normalize_embeddings: true
+
+# ── Prompts ───────────────────────────────────────────────────
+prompts:
+  keyword_description:
+    version: "1.0"
+    template: |
+      Ты получаешь два фрагмента текста, в которых упоминается ключевое слово "{keyword}".
+
+      == ОБОБЩЁННЫЙ КОНТЕКСТ (высокий уровень иерархии) ==
+      {broad_context}
+
+      == ДЕТАЛЬНЫЙ ИСХОДНЫЙ ТЕКСТ ==
+      {detail_context}
+
+      Первый фрагмент — обобщённый контекст из иерархического суммаризатора,
+      он показывает общую роль ключевого слова в статье.
+      Второй — оригинальный текст из конкретного чанка, содержащий детали.
+
+      Напиши 1-2 предложения, описывающие значение "{keyword}" в контексте этой статьи.
+      Описание должно быть на русском языке и отражать специфику использования слова в данном контексте.
+
+  concept_summary:
+    version: "1.0"
+    template: |
+      Ниже приведены описания ключевого слова "{keyword}" из разных статей:
+
+      {descriptions}
+
+      Объедини эти описания в одно обобщённое определение понятия.
+      Определи домен знаний (например: devops, ml, databases, web, security, programming).
+
+      Ответь в формате JSON:
+      {{
+        "canonical_name": "нормализованное название",
+        "domain": "домен знаний",
+        "description": "обобщённое описание (2-3 предложения)"
+      }}
+
+  cross_relations:
+    version: "1.0"
+    template: |
+      Даны понятия (Concept) из разных статей:
+
+      {concepts}
+
+      Найди семантические связи между этими понятиями.
+      Для каждой связи укажи:
+      - source: название исходного понятия
+      - target: название целевого понятия
+      - predicate: тип связи (например: "используется_в", "является_частью", "дополняет", "альтернатива")
+      - description: краткое описание связи (1 предложение)
+      - confidence: уверенность 0-1
+
+      Ответь в формате JSON — массив объектов.
+
+# ── Stores ────────────────────────────────────────────────────
+stores:
+  qdrant:
+    host: localhost
+    port: 6333
+    concepts_collection: concepts
+    cross_relations_collection: cross_relations
+    vector_size: 768
+
+  neo4j:
+    class_: stores.graph_store.Neo4jGraphStore
+    uri: bolt://localhost:7687
+    user: neo4j
+    password: raptor_password
+    database: neo4j

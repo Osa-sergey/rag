@@ -54,6 +54,7 @@ class Neo4jGraphStore(BaseGraphStore):
             "CREATE INDEX IF NOT EXISTS FOR (a:Article) ON (a.id)",
             "CREATE INDEX IF NOT EXISTS FOR (k:Keyword) ON (k.word)",
             "CREATE INDEX IF NOT EXISTS FOR (t:Topic) ON (t.id)",
+            "CREATE INDEX IF NOT EXISTS FOR (c:Concept) ON (c.id)",
         ]
         with self._driver.session(database=self._database) as session:
             for q in queries:
