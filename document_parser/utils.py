@@ -91,6 +91,9 @@ def check_id_sequence(document: List[Dict]) -> bool:
             continue
 
         parts = bid.split(".")
+        # Пропускаем id с нечисловыми частями (например "None")
+        if not parts[-1].isdigit():
+            continue
         parent_prefix = ".".join(parts[:-1])  # "" для top-level
         child_num = int(parts[-1])
 
