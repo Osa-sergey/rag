@@ -78,38 +78,34 @@ def check_id_sequence(document: List[Dict]) -> bool:
     Проверяет, что номера на каждом уровне идут по порядку без пробелов.
     Возвращает True, если последовательность корректна, иначе False.
     """
-    def walk(blocks, prefix=""):
-        # Словарь для хранения max номера на каждом уровне
-        level_nums = {}
-        for block in blocks:
-            bid = str(block.get("id"))
-            if not bid:
+    flat = flatten_blocks(document)
+
+    # Для каждого родительского префикса отслеживаем последний номер ребёнка.
+    # Пример: для ID "3.2.1" родитель = "3.2", номер ребёнка = 1.
+    #         для ID "3"     родитель = "",    номер ребёнка = 3.
+    parent_counters: Dict[str, int] = {}
+
+    for block in flat:
+        bid = str(block.get("id", ""))
+        if not bid:
+            continue
+
+        parts = bid.split(".")
+        parent_prefix = ".".join(parts[:-1])  # "" для top-level
+        child_num = int(parts[-1])
+
+        last_seen = parent_counters.get(parent_prefix, 0)
+
+        if child_num != last_seen + 1:
+            # Допускаем повторное появление уже виденного номера
+            # (тот же родитель, тот же ребёнок — дубликат в flat-представлении)
+            if child_num <= last_seen:
                 continue
-            parts = bid.split(".")
-            # Сравниваем с ожидаемым номером на каждом уровне
-            for i, num in enumerate(parts):
-                lvl = i
-                expected = level_nums.get(lvl, 0) + 1
-                actual = int(num)
-                if actual != expected:
-                    return False
-                level_nums[lvl] = actual
+            return False
 
-            # Рекурсивно проверяем вложенные list_items
-            if block.get("type") == "list":
-                for item in block.get("items", {}).get("items", []):
-                    nested = item.get("lists", [])
-                    if nested:
-                        if not walk([{"type": "list", "items": n} for n in nested]):
-                            return False
+        parent_counters[parent_prefix] = child_num
 
-            # Проверяем children у blockquote
-            if block.get("type") == "blockquote":
-                if not walk(block.get("children", [])):
-                    return False
-        return True
-
-    return walk(document)
+    return True
 
 
 # ───────────────────────────────────────
