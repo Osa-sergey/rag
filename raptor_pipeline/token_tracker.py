@@ -88,6 +88,31 @@ def _extract_token_usage(response: Any) -> TokenUsage:
             call_count=1,
         )
 
+    # ── Flat keys directly in meta (some llama-server versions) ──
+    prompt = meta.get("prompt_tokens", 0) or 0
+    completion = meta.get("completion_tokens", 0) or 0
+    if prompt or completion:
+        total = meta.get("total_tokens", 0) or (prompt + completion)
+        return TokenUsage(
+            prompt_tokens=prompt,
+            completion_tokens=completion,
+            cached_tokens=0,
+            total_tokens=total,
+            call_count=1,
+        )
+
+    # No token data found — log for debugging
+    if meta:
+        logger.debug(
+            "No token usage found in response_metadata. Keys present: %s",
+            list(meta.keys()),
+        )
+    else:
+        logger.debug(
+            "response_metadata is empty. response type: %s",
+            type(response).__name__,
+        )
+
     return TokenUsage(call_count=1)
 
 
