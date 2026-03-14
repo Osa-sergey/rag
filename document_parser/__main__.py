@@ -84,13 +84,16 @@ def parse_csv(input_file, output_dir, html_column, override):
     csv_path = Path(input_file)
     out_dir = Path(cfg.output_dir)
     count = 0
-    for result in process_csv(csv_path, html_column=cfg.html_column, output_dir=out_dir):
+    for result, out_file in process_csv(csv_path, html_column=cfg.html_column, output_dir=out_dir):
         article_id = result.get("article_id", "?")
-        click.echo(f"  ✓ {article_id}")
+        click.echo(f"  ✓ {article_id} → {out_file}")
         count += 1
 
     click.echo(f"\nОбработано статей: {count}")
     click.echo(f"Результаты в: {out_dir}")
+    if count > 0:
+        click.echo(f"\n💡 Для запуска raptor_pipeline:")
+        click.echo(f"   python -m raptor_pipeline.main input_file={out_file.name}")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -120,11 +123,13 @@ def parse_md(input_file, output_dir, override):
 
     md_path = Path(input_file)
     out_dir = Path(cfg.output_dir)
-    result = process_md_file(md_path, output_dir=out_dir)
+    result, out_file = process_md_file(md_path, output_dir=out_dir)
     article_id = result.get("article_id", md_path.stem)
     n_blocks = len(result.get("document", []))
-    click.echo(f"✓ {article_id} — {n_blocks} блоков")
+    click.echo(f"✓ {article_id} — {n_blocks} блоков → {out_file}")
     click.echo(f"Результат в: {out_dir}")
+    click.echo(f"\n💡 Для запуска raptor_pipeline:")
+    click.echo(f"   python -m raptor_pipeline.main input_file={out_file.name}")
 
 
 # ══════════════════════════════════════════════════════════════

@@ -65,7 +65,7 @@ def process_md_file(md_path: Path, output_dir: Path = Path("parsed_yaml")):
     with filename.open("w", encoding="utf-8") as yf:
         yaml.dump(result, yf, allow_unicode=True, sort_keys=False)
 
-    return result
+    return result, filename
 
 class ArticleParser:
     def __init__(self):
@@ -356,7 +356,7 @@ def process_csv(csv_path: Path, html_column="content_html", output_dir: Path = P
             with filename.open("w", encoding="utf-8") as yf:
                 yaml.dump(result, yf, allow_unicode=True, sort_keys=False)
 
-            yield result
+            yield result, filename
 
 
 # ───────────────────────────────────────
