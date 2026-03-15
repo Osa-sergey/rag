@@ -7,6 +7,7 @@ log_level: INFO
 # ── Thresholds ────────────────────────────────────────────────
 similarity_threshold: 0.85     # cosine ≥ 0.85 → same Concept
 min_keyword_confidence: 0.8    # only keywords with confidence ≥ 0.8
+min_relation_confidence: 0.5   # only RELATED_TO edges with confidence ≥ 0.5
 max_prompt_tokens: 3000        # limit LLM prompt length
 
 # ── Traversal defaults ───────────────────────────────────────
@@ -66,13 +67,20 @@ prompts:
       Описание должно быть на русском языке и отражать специфику использования слова в данном контексте.
 
   concept_summary:
-    version: "1.0"
+    version: "2.0"
     template: |
       Ниже приведены описания ключевого слова "{keyword}" из разных статей:
 
       {descriptions}
 
-      Объедини эти описания в одно обобщённое определение понятия.
+      == СВЯЗИ МЕЖДУ КЛЮЧЕВЫМИ СЛОВАМИ ВНУТРИ КОНЦЕПТА ==
+      {intra_relations}
+
+      == ВНЕШНИЕ СВЯЗИ С ДРУГИМИ КОНЦЕПТАМИ ==
+      {inter_relations}
+
+      Объедини описания и связи в одно обобщённое определение понятия.
+      Учитывай связи между ключевыми словами для более точного определения концепта.
       Определи домен знаний (например: devops, ml, databases, web, security, programming).
 
       Ответь в формате JSON:

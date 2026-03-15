@@ -65,6 +65,7 @@ class CrossArticleProcessor:
 
         self._similarity_threshold: float = cfg.get("similarity_threshold", 0.85)
         self._min_confidence: float = cfg.get("min_keyword_confidence", 0.8)
+        self._min_relation_confidence: float = cfg.get("min_relation_confidence", 0.5)
 
     # ══════════════════════════════════════════════════════════
     # Dry Run
@@ -257,25 +258,107 @@ class CrossArticleProcessor:
                 len(all_contexts), len(dedup_contexts),
             )
 
-        # ── Step 4: Cluster ───────────────────────────────────
+        # ── Step 4: Cluster ───────────────────────────────────────
         logger.info("  Clustering keywords into concepts...")
         clusters = self._clusterer.cluster(
             dedup_contexts, self._similarity_threshold,
         )
 
+        # ── Step 4.5: Load keyword RELATED_TO edges ───────────
+        all_words = {kc.word for kc in dedup_contexts}
+        kw_relations = self._load_keyword_relations(all_words)
+        logger.info(
+            "  Loaded %d keyword relations (confidence ≥ %.2f)",
+            len(kw_relations), self._min_relation_confidence,
+        )
+
+        # Build word → cluster_index mapping
+        word_to_cluster: dict[str, int] = {}
+        for idx, cluster in enumerate(clusters):
+            for kc in cluster:
+                word_to_cluster[kc.word] = idx
+
+        # Classify relations: intra-cluster vs inter-cluster
+        intra_by_cluster: dict[int, list[dict]] = {}
+        inter_relations: list[tuple[int, int, dict]] = []  # (src_idx, tgt_idx, rel)
+
+        for rel in kw_relations:
+            subj = rel["subject"]
+            obj = rel["object"]
+            src_idx = word_to_cluster.get(subj)
+            tgt_idx = word_to_cluster.get(obj)
+            if src_idx is None or tgt_idx is None:
+                continue
+            if src_idx == tgt_idx:
+                intra_by_cluster.setdefault(src_idx, []).append(rel)
+            else:
+                inter_relations.append((src_idx, tgt_idx, rel))
+
+        logger.info(
+            "  Relations: %d intra-cluster, %d inter-cluster",
+            sum(len(v) for v in intra_by_cluster.values()),
+            len(inter_relations),
+        )
+
+        # Collect inter-cluster relations grouped by cluster pairs
+        # for inclusion in concept prompt as "external connections"
+        inter_by_cluster: dict[int, list[dict]] = {}
+        for src_idx, tgt_idx, rel in inter_relations:
+            inter_by_cluster.setdefault(src_idx, []).append(rel)
+            inter_by_cluster.setdefault(tgt_idx, []).append(rel)
+
         # ── Step 5: Create Concept nodes ──────────────────────
         logger.info("  Creating %d Concept nodes...", len(clusters))
         concepts: list[ConceptNode] = []
-        for cluster in tqdm(clusters, desc="Creating concepts", unit="concept"):
-            concept = self._create_concept_from_cluster(cluster)
+        for idx, cluster in enumerate(tqdm(clusters, desc="Creating concepts", unit="concept")):
+            intra_rels = intra_by_cluster.get(idx, [])
+            inter_rels = inter_by_cluster.get(idx, [])
+            concept = self._create_concept_from_cluster(cluster, intra_rels, inter_rels)
             concept.run_id = run_id
             concepts.append(concept)
 
         # ── Step 6: Extract cross-relations ───────────────────
-        relations: list[CrossRelation] = []
+        # 6a: Relations from keyword-level RELATED_TO
+        kw_based_relations: list[CrossRelation] = []
+        seen_pairs: set[tuple[int, int]] = set()
+        for src_idx, tgt_idx, rel in inter_relations:
+            pair = (min(src_idx, tgt_idx), max(src_idx, tgt_idx))
+            if pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
+            src_concept = concepts[src_idx] if src_idx < len(concepts) else None
+            tgt_concept = concepts[tgt_idx] if tgt_idx < len(concepts) else None
+            if src_concept and tgt_concept:
+                # Collect all relations between this pair
+                pair_rels = [
+                    r for si, ti, r in inter_relations
+                    if (min(si, ti), max(si, ti)) == pair
+                ]
+                predicates = list({r["predicate"] for r in pair_rels})
+                desc_parts = [f"{r['subject']} --[{r['predicate']}]--> {r['object']}" for r in pair_rels[:5]]
+                kw_based_relations.append(CrossRelation(
+                    source=src_concept.canonical_name,
+                    target=tgt_concept.canonical_name,
+                    predicate=", ".join(predicates[:3]),
+                    description=f"Based on keyword relations: {'; '.join(desc_parts)}",
+                    confidence=max(r["confidence"] for r in pair_rels),
+                    source_articles=list(
+                        set(src_concept.source_articles) | set(tgt_concept.source_articles)
+                    ),
+                ))
+        if kw_based_relations:
+            logger.info(
+                "  Created %d cross-relations from keyword RELATED_TO",
+                len(kw_based_relations),
+            )
+
+        # 6b: LLM-generated relations
+        relations: list[CrossRelation] = list(kw_based_relations)
         if self._relation_builder and len(concepts) >= 2:
             logger.info("  Extracting cross-relations between %d concepts...", len(concepts))
-            relations = self._relation_builder.extract(concepts)
+            llm_relations = self._relation_builder.extract(concepts)
+            relations.extend(llm_relations)
+
 
         # ── Step 7: Compute concept embeddings ────────────────
         logger.info("  Computing concept embeddings...")
@@ -380,13 +463,46 @@ class CrossArticleProcessor:
                     description=kc.description,
                 )
 
+    def _load_keyword_relations(self, words: set[str]) -> list[dict]:
+        """Load RELATED_TO edges between keywords, filtered by confidence.
+
+        Returns list of dicts with keys: subject, predicate, object, confidence.
+        """
+        if not words:
+            return []
+        with self._gs._driver.session(database=self._gs._database) as session:
+            result = session.run(
+                """
+                MATCH (s:Keyword)-[r:RELATED_TO]->(o:Keyword)
+                WHERE s.word IN $words AND o.word IN $words
+                  AND (r.confidence IS NULL OR r.confidence >= $min_conf)
+                RETURN s.word AS subject, r.predicate AS predicate,
+                       o.word AS object,
+                       coalesce(r.confidence, 0.0) AS confidence
+                """,
+                words=list(words),
+                min_conf=self._min_relation_confidence,
+            ).data()
+        return result
+
     def _create_concept_from_cluster(
-        self, cluster: list[KeywordContext],
+        self,
+        cluster: list[KeywordContext],
+        intra_relations: list[dict] | None = None,
+        inter_relations: list[dict] | None = None,
     ) -> ConceptNode:
         """Create a ConceptNode from a cluster of KeywordContexts.
 
         Uses LLM to generate summary if available, otherwise heuristic.
+
+        Args:
+            cluster: KeywordContexts in this cluster.
+            intra_relations: RELATED_TO edges between keywords within this cluster.
+            inter_relations: RELATED_TO edges connecting this cluster's keywords to other clusters.
         """
+        intra_relations = intra_relations or []
+        inter_relations = inter_relations or []
+
         # Collect metadata
         all_words = list({kc.word for kc in cluster})
         all_articles_set: set[str] = set()
@@ -406,6 +522,21 @@ class CrossArticleProcessor:
         for kc in cluster:
             word_counts[kc.word] = word_counts.get(kc.word, 0) + 1
         canonical_name = max(word_counts, key=word_counts.get)
+
+        # Format relations for prompt
+        intra_text = ""
+        if intra_relations:
+            lines = []
+            for r in intra_relations[:15]:
+                lines.append(f"- {r['subject']} --[{r['predicate']}]--> {r['object']}")
+            intra_text = "\n".join(lines)
+
+        inter_text = ""
+        if inter_relations:
+            lines = []
+            for r in inter_relations[:15]:
+                lines.append(f"- {r['subject']} --[{r['predicate']}]--> {r['object']}")
+            inter_text = "\n".join(lines)
 
         # Try LLM summary
         description = ""
@@ -427,6 +558,8 @@ class CrossArticleProcessor:
                         template
                         .replace("{keyword}", canonical_name)
                         .replace("{descriptions}", descriptions_text)
+                        .replace("{intra_relations}", intra_text or "нет")
+                        .replace("{inter_relations}", inter_text or "нет")
                     )
                     response = llm.invoke(prompt)
                     if self._token_tracker:
