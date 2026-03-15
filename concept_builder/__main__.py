@@ -129,7 +129,7 @@ def dry_run(base_article, strategy, max_articles, article_ids, no_check_connecti
             f"Сначала запустите raptor_pipeline для них."
         )
 
-    click.echo(f"\n  Связи между статьями ({len(report.references)}):")
+    click.echo(f"\n  Связи между статьями ({len(report.references)}):") 
     if report.references:
         for src, tgt in report.references:
             click.echo(f"    {src} → {tgt}")
@@ -137,7 +137,9 @@ def dry_run(base_article, strategy, max_articles, article_ids, no_check_connecti
         click.echo("    ⚠️  Нет REFERENCES рёбер между выбранными статьями")
         click.echo("    Проверьте: python -m raptor_pipeline inspect-graph --list-articles")
 
+    cached = report.total_keywords - report.total_needing_description
     click.echo(f"\n  Всего keywords (≥{cfg.min_keyword_confidence}): {report.total_keywords}")
+    click.echo(f"  Описания: {cached} cached, {report.total_needing_description} требуют LLM")
     click.echo(f"  Оценка LLM-вызовов: ~{report.estimated_llm_calls}")
     click.echo()
 

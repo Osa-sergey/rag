@@ -98,6 +98,11 @@ class CrossArticleProcessor:
             report.raw_keywords_per_article[aid] = len(kws)
             report.total_keywords += len(filtered)
 
+            # Count keywords that still need LLM description
+            needing = sum(1 for k in filtered if not k.description)
+            report.keywords_needing_description[aid] = needing
+            report.total_needing_description += needing
+
             # Confidence distribution for diagnostics
             high = sum(1 for k in kws if k.confidence >= 0.8)
             med = sum(1 for k in kws if 0.5 <= k.confidence < 0.8)
@@ -127,9 +132,9 @@ class CrossArticleProcessor:
             ).data()
             report.references = [(r["source"], r["target"]) for r in refs]
 
-        # Estimate LLM calls
+        # Estimate LLM calls (only keywords needing description + clusters + relations)
         est_clusters = max(1, report.total_keywords // 3)
-        report.estimated_llm_calls = report.total_keywords + est_clusters + 1
+        report.estimated_llm_calls = report.total_needing_description + est_clusters + 1
 
         return report
 
@@ -190,16 +195,29 @@ class CrossArticleProcessor:
 
         logger.info("  Total keywords for processing: %d", len(all_contexts))
 
-        # ── Step 2: Generate descriptions ─────────────────────
-        logger.info("  Generating keyword descriptions...")
-        for kc in all_contexts:
-            if not kc.description and self._describer:
+        # ── Step 2: Generate descriptions (reuse cached) ──────
+        need_description = [kc for kc in all_contexts if not kc.description]
+        cached = len(all_contexts) - len(need_description)
+        logger.info(
+            "  Descriptions: %d cached, %d need LLM generation",
+            cached, len(need_description),
+        )
+        for kc in need_description:
+            if self._describer:
                 kc.description = self._describer.describe(
                     kc.word, kc.article_id, kc.chunk_ids,
                 )
             if not kc.description:
                 # Fallback: use word + category as description
                 kc.description = f"{kc.word} ({kc.category})"
+
+        # Save new descriptions back to Neo4j for future reuse
+        new_descriptions = [
+            kc for kc in need_description if kc.description
+        ]
+        if new_descriptions:
+            self._save_keyword_descriptions(new_descriptions)
+            logger.info("  Saved %d new keyword descriptions to Neo4j", len(new_descriptions))
 
         # ── Step 3: Compute embeddings ────────────────────────
         logger.info("  Computing description embeddings...")
@@ -290,14 +308,15 @@ class CrossArticleProcessor:
             ).single()
             version = art_result["version"] if art_result else ""
 
-            # Get keywords with chunk_ids and confidence
+            # Get keywords with chunk_ids, confidence, and cached description
             kw_results = session.run(
                 """
                 MATCH (a:Article {id: $id})-[r:HAS_KEYWORD]->(k:Keyword)
                 RETURN k.word AS word,
                        k.category AS category,
                        r.confidence AS confidence,
-                       r.chunk_ids AS chunk_ids
+                       r.chunk_ids AS chunk_ids,
+                       r.description AS description
                 """,
                 id=article_id,
             ).data()
@@ -311,8 +330,23 @@ class CrossArticleProcessor:
                 category=kw.get("category", ""),
                 confidence=kw.get("confidence", 0.0) or 0.0,
                 chunk_ids=kw.get("chunk_ids", []) or [],
+                description=kw.get("description", "") or "",
             ))
         return contexts
+
+    def _save_keyword_descriptions(self, contexts: list[KeywordContext]) -> None:
+        """Persist keyword descriptions to HAS_KEYWORD.description in Neo4j."""
+        with self._gs._driver.session(database=self._gs._database) as session:
+            for kc in contexts:
+                session.run(
+                    """
+                    MATCH (a:Article {id: $article_id})-[r:HAS_KEYWORD]->(k:Keyword {word: $word})
+                    SET r.description = $description
+                    """,
+                    article_id=kc.article_id,
+                    word=kc.word,
+                    description=kc.description,
+                )
 
     def _create_concept_from_cluster(
         self, cluster: list[KeywordContext],
