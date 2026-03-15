@@ -168,6 +168,8 @@ def dry_run(base_article, strategy, max_articles, article_ids, no_check_connecti
         embedder = container.embedding_provider()
         descriptions = [kc.description for kc in kws_dedup]
         embeddings = embedder.embed_texts(descriptions)
+        for kc, emb in zip(kws_dedup, embeddings):
+            kc.embedding = emb
         vectors = np.array(embeddings, dtype=np.float32)
 
         norms = np.linalg.norm(vectors, axis=1, keepdims=True)
