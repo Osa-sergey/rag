@@ -337,8 +337,8 @@ class CrossArticleProcessor:
                 predicates = list({r["predicate"] for r in pair_rels})
                 desc_parts = [f"{r['subject']} --[{r['predicate']}]--> {r['object']}" for r in pair_rels[:5]]
                 kw_based_relations.append(CrossRelation(
-                    source=src_concept.canonical_name,
-                    target=tgt_concept.canonical_name,
+                    source_concept_id=src_concept.id,
+                    target_concept_id=tgt_concept.id,
                     predicate=", ".join(predicates[:3]),
                     description=f"Based on keyword relations: {'; '.join(desc_parts)}",
                     confidence=max(r["confidence"] for r in pair_rels),
