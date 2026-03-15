@@ -50,9 +50,25 @@ COMPONENTS = (
 def _extract_token_usage(response: Any) -> TokenUsage:
     """Extract token usage from a LangChain AIMessage response.
 
-    Handles both OpenAI-compatible and Ollama response formats.
+    Handles: usage_metadata (new LangChain), response_metadata with
+    token_usage/usage (OpenAI), prompt_eval_count (Ollama), flat keys.
     Returns a zero TokenUsage if no token data is found.
     """
+    # ── New LangChain: usage_metadata on AIMessage ────────────
+    usage_meta = getattr(response, "usage_metadata", None)
+    if usage_meta and isinstance(usage_meta, dict):
+        inp = usage_meta.get("input_tokens", 0) or 0
+        out = usage_meta.get("output_tokens", 0) or 0
+        total = usage_meta.get("total_tokens", 0) or (inp + out)
+        if inp or out:
+            return TokenUsage(
+                prompt_tokens=inp,
+                completion_tokens=out,
+                cached_tokens=0,
+                total_tokens=total,
+                call_count=1,
+            )
+
     meta = getattr(response, "response_metadata", None) or {}
 
     # ── OpenAI-compatible format ──────────────────────────────

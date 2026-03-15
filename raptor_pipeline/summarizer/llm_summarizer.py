@@ -22,6 +22,7 @@ def _build_llm(cfg: DictConfig):
             openai_api_base=cfg.get("base_url", "https://openrouter.ai/api/v1"),
             temperature=cfg.get("temperature", 0.3),
             max_tokens=cfg.get("max_tokens", 1024),
+            stream_usage=True,
             default_headers={
                 "HTTP-Referer": "https://github.com/langchain-ai/langchain",
                 "X-Title": "RAPTOR Pipeline",
@@ -48,6 +49,7 @@ def _build_llm(cfg: DictConfig):
             openai_api_base=cfg.get("base_url", "http://localhost:8080/v1"),
             temperature=cfg.get("temperature", 0.1),
             max_tokens=cfg.get("max_tokens", 2048),
+            stream_usage=True,
         )
     raise ValueError(f"Unknown LLM provider: {provider}")
 
