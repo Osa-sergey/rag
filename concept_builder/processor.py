@@ -229,10 +229,37 @@ class CrossArticleProcessor:
         for kc, emb in zip(all_contexts, embeddings):
             kc.embedding = emb
 
+        # ── Step 3.5: Deduplicate by word across articles ─────
+        # Same word from different articles → merge into one context
+        # keeping all article_ids so concepts get all source articles
+        dedup: dict[str, KeywordContext] = {}
+        for kc in all_contexts:
+            key = kc.word.lower()
+            if key not in dedup:
+                dedup[key] = kc
+                if not hasattr(kc, "extra_article_ids"):
+                    kc.extra_article_ids = []
+            else:
+                existing = dedup[key]
+                if not hasattr(existing, "extra_article_ids"):
+                    existing.extra_article_ids = []
+                if kc.article_id not in existing.extra_article_ids and kc.article_id != existing.article_id:
+                    existing.extra_article_ids.append(kc.article_id)
+                # Keep the best confidence
+                if kc.confidence > existing.confidence:
+                    existing.confidence = kc.confidence
+
+        dedup_contexts = list(dedup.values())
+        if len(dedup_contexts) < len(all_contexts):
+            logger.info(
+                "  Deduplicated %d → %d keywords (merged same words across articles)",
+                len(all_contexts), len(dedup_contexts),
+            )
+
         # ── Step 4: Cluster ───────────────────────────────────
         logger.info("  Clustering keywords into concepts...")
         clusters = self._clusterer.cluster(
-            all_contexts, self._similarity_threshold,
+            dedup_contexts, self._similarity_threshold,
         )
 
         # ── Step 5: Create Concept nodes ──────────────────────
@@ -360,7 +387,13 @@ class CrossArticleProcessor:
         """
         # Collect metadata
         all_words = list({kc.word for kc in cluster})
-        all_articles = list({kc.article_id for kc in cluster})
+        all_articles_set: set[str] = set()
+        for kc in cluster:
+            all_articles_set.add(kc.article_id)
+            # Also collect extra article_ids from deduplication step
+            for extra in getattr(kc, "extra_article_ids", []):
+                all_articles_set.add(extra)
+        all_articles = list(all_articles_set)
         all_versions = {}
         for kc in cluster:
             if kc.article_id and kc.version:
