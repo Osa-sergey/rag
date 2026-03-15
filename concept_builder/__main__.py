@@ -473,6 +473,9 @@ def inspect_concept(concept_id, override):
             f"    ↔ {rel.get('other_name')} ({rel.get('other_domain')}) "
             f"— {rel.get('predicate')} ({rel.get('confidence', 0):.2f})"
         )
+        desc = rel.get("description", "")
+        if desc:
+            click.echo(f"      {desc}")
 
     click.echo()
     container.graph_store().close()
