@@ -212,8 +212,9 @@ def process(base_article, strategy, max_articles, article_ids, no_check_connecti
 @cli.command("list-concepts")
 @click.option("--domain", "-d", default=None, help="Фильтр по домену")
 @click.option("--article-id", "-a", default=None, help="Фильтр по article_id (concepts содержащие статью)")
+@click.option("--show-relations", "-r", is_flag=True, help="Показать связанные концепты")
 @click.option("--override", "-o", multiple=True, help="Hydra override")
-def list_concepts(domain, article_id, override):
+def list_concepts(domain, article_id, show_relations, override):
     """Показать все Concept-ноды с их ID.
 
     \\b
@@ -248,14 +249,15 @@ def list_concepts(domain, article_id, override):
             f"""
             MATCH (c:Concept)
             {where_clause}
-            OPTIONAL MATCH (c)-[r:CROSS_RELATED_TO]-()
+            OPTIONAL MATCH (c)-[r:CROSS_RELATED_TO]-(other:Concept)
             RETURN c.id AS id, c.canonical_name AS name, c.domain AS domain,
                    c.description AS description,
                    c.source_articles AS source_articles,
                    c.keyword_words AS keyword_words,
                    c.version AS version,
                    c.is_active AS is_active,
-                   count(DISTINCT r) AS relations_count
+                   count(DISTINCT r) AS relations_count,
+                   collect(DISTINCT {{name: other.canonical_name, predicate: r.predicate, desc: r.description}}) AS relations
             ORDER BY c.domain, c.canonical_name, c.version
             """,
             **params,
@@ -293,6 +295,20 @@ def list_concepts(domain, article_id, override):
         click.echo(f"     articles: {', '.join(articles) if articles else '—'}")
         if rels:
             click.echo(f"     cross-relations: {rels}")
+            if show_relations:
+                relations = c.get("relations") or []
+                for rel in relations:
+                    if rel.get("name"):
+                        pred = rel.get("predicate", "")
+                        rname = rel.get("name", "?")
+                        rdesc = rel.get("desc", "")
+                        line = f"       → {rname}"
+                        if pred:
+                            line += f" ({pred})"
+                        if rdesc:
+                            short = rdesc[:80] + "..." if len(rdesc) > 80 else rdesc
+                            line += f": {short}"
+                        click.echo(line)
         if desc:
             short_desc = desc[:120] + "..." if len(desc) > 120 else desc
             click.echo(f"     description: {short_desc}")
