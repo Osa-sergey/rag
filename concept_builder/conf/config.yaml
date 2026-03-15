@@ -13,6 +13,18 @@ max_prompt_tokens: 3000        # limit LLM prompt length
 default_strategy: bfs          # bfs | dfs
 default_max_articles: 20
 
+# ── Clustering ───────────────────────────────────────────────
+clustering:
+  # Доступные:
+  #   concept_builder.concept_clusterer.GreedyConceptClusterer   — greedy cosine (по умолчанию)
+  #   concept_builder.concept_clusterer.HdbscanConceptClusterer  — HDBSCAN density-based
+  class_: concept_builder.concept_clusterer.GreedyConceptClusterer
+  # Параметры HDBSCAN (игнорируются для Greedy):
+  min_cluster_size: 2
+  min_samples: 1
+  cluster_selection_epsilon: 0.15
+  metric: euclidean
+
 # ── LLM (for descriptions, summaries, relations) ─────────────
 llm:
   provider: llama_cpp
