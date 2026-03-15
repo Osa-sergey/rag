@@ -253,8 +253,10 @@ def list_concepts(domain, article_id, override):
                    c.description AS description,
                    c.source_articles AS source_articles,
                    c.keyword_words AS keyword_words,
+                   c.version AS version,
+                   c.is_active AS is_active,
                    count(DISTINCT r) AS relations_count
-            ORDER BY c.domain, c.canonical_name
+            ORDER BY c.domain, c.canonical_name, c.version
             """,
             **params,
         ).data()
@@ -281,15 +283,18 @@ def list_concepts(domain, article_id, override):
         articles = c.get("source_articles") or []
         rels = c.get("relations_count", 0)
         desc = c.get("description", "")
+        version = c.get("version") or 1
+        is_active = c.get("is_active", True)
+        active_badge = "✓ active" if is_active else "inactive"
 
-        click.echo(f"  💡 {name} ({domain_val})")
+        click.echo(f"  💡 {name} ({domain_val}) v{version} [{active_badge}]")
         click.echo(f"     id: {cid}")
         click.echo(f"     keywords: {', '.join(keywords) if keywords else '—'}")
         click.echo(f"     articles: {', '.join(articles) if articles else '—'}")
         if rels:
             click.echo(f"     cross-relations: {rels}")
         if desc:
-            short_desc = desc[:100] + "..." if len(desc) > 100 else desc
+            short_desc = desc[:120] + "..." if len(desc) > 120 else desc
             click.echo(f"     description: {short_desc}")
         click.echo()
 
@@ -411,6 +416,196 @@ def _select_articles(selector, cfg, base_article, strategy, max_articles,
         raise click.UsageError(
             "Укажите --base-article (-b) или --article-ids (-a)"
         )
+
+
+# ══════════════════════════════════════════════════════════════
+# expand
+# ══════════════════════════════════════════════════════════════
+
+@cli.command("expand")
+@click.option("--concept-ids", "-c", required=True, help="UUID Concept-нод через запятую")
+@click.option("--article-ids", "-a", required=True, help="Article IDs через запятую")
+@click.option("--high-threshold", default=0.85, type=float, help="Порог прямого включения (default: 0.85)")
+@click.option("--low-threshold", default=0.65, type=float, help="Порог LLM-верификации (default: 0.65)")
+@click.option("--override", "-o", multiple=True, help="Hydra override")
+def expand_cmd(concept_ids, article_ids, high_threshold, low_threshold, override):
+    """Расширить существующие Concepts keywords из новых статей.
+
+    \\b
+    Примеры:
+      python -m concept_builder expand -c uuid1,uuid2 -a 986380,985200
+      python -m concept_builder expand -c uuid1 -a 986380 --high-threshold 0.80
+    """
+    cfg = load_config(CONFIG_DIR, CONFIG_NAME, ConceptBuilderConfig, overrides=override)
+
+    from concept_builder.containers import ConceptBuilderContainer
+    container = ConceptBuilderContainer(config=cfg)
+    _ensure_concept_collections(container, cfg)
+    processor = container.processor()
+
+    c_ids = [x.strip() for x in concept_ids.split(",") if x.strip()]
+    a_ids = [x.strip() for x in article_ids.split(",") if x.strip()]
+
+    results = processor.expand(
+        c_ids, a_ids,
+        high_threshold=high_threshold,
+        low_threshold=low_threshold,
+    )
+
+    if not results:
+        click.echo("\n  Нет совпадений между keywords и Concepts.")
+        container.graph_store().close()
+        return
+
+    # ── Phase 5: Show results and get user choice ─────────
+    click.echo(f"\n{'═' * 70}")
+    click.echo(f"  EXPAND — выбор версий")
+    click.echo(f"{'═' * 70}")
+
+    for r in results:
+        click.echo(f"\n{'═' * 70}")
+        click.echo(f"  Concept: {r.concept_name} ({r.domain})")
+        click.echo(f"{'═' * 70}")
+
+        # v1 — original
+        click.echo(f"\n  v{r.original_version} (текущая):")
+        click.echo(f"    keywords: {', '.join(r.original.keyword_words)}")
+        click.echo(f"    articles: {', '.join(r.original.source_articles)}")
+        click.echo(f"    description: {r.original.description}")
+
+        available = [r.original_version]
+
+        # v(N+1) — direct
+        if r.v_direct:
+            click.echo(f"\n  v{r.v_direct.version} (+ прямые включения):")
+            for word, sim in r.direct_keywords:
+                click.echo(f"    + {word} (sim={sim:.2f})")
+            click.echo(f"    keywords: {', '.join(r.v_direct.keyword_words)}")
+            click.echo(f"    articles: {', '.join(r.v_direct.source_articles)}")
+            click.echo(f"    description: {r.v_direct.description}")
+            available.append(r.v_direct.version)
+
+        # v(N+2) — direct + LLM
+        if r.v_llm:
+            click.echo(f"\n  v{r.v_llm.version} (+ прямые + LLM-верифицированные):")
+            for word, conf, rel in r.llm_keywords:
+                click.echo(f"    + {word} (LLM confidence={conf:.2f}, \"{rel}\")")
+            click.echo(f"    keywords: {', '.join(r.v_llm.keyword_words)}")
+            click.echo(f"    articles: {', '.join(r.v_llm.source_articles)}")
+            click.echo(f"    description: {r.v_llm.description}")
+            available.append(r.v_llm.version)
+
+        choices = "/".join(str(v) for v in available)
+        while True:
+            choice = click.prompt(
+                f"\n  Выберите версию [{choices}]",
+                type=int,
+                default=available[-1],
+            )
+            if choice in available:
+                r.chosen_version = choice
+                break
+            click.echo(f"  ❌ Допустимые: {choices}")
+
+    # ── Finalize ──────────────────────────────────────────
+    click.echo(f"\n{'═' * 70}")
+    click.echo("  Сохранение выбранных версий...")
+
+    summary = processor.finalize_expand(results)
+
+    click.echo(f"\n  ✓ Concepts обновлено: {summary['concepts_updated']}")
+    click.echo(f"  ✓ Новых concepts: {summary['new_concepts']}")
+    click.echo(f"  ✓ Cross-relations: {summary['relations']}")
+    click.echo(f"  ✓ Версий сохранено: {summary['versions_stored']}")
+    click.echo()
+
+    container.graph_store().close()
+
+
+# ══════════════════════════════════════════════════════════════
+# expand-dry-run
+# ══════════════════════════════════════════════════════════════
+
+@cli.command("expand-dry-run")
+@click.option("--concept-ids", "-c", required=True, help="UUID Concept-нод через запятую")
+@click.option("--article-ids", "-a", required=True, help="Article IDs через запятую")
+@click.option("--high-threshold", default=0.85, type=float, help="Порог прямого включения")
+@click.option("--low-threshold", default=0.65, type=float, help="Порог LLM-верификации")
+@click.option("--override", "-o", multiple=True, help="Hydra override")
+def expand_dry_run(concept_ids, article_ids, high_threshold, low_threshold, override):
+    """Preview expand без LLM-вызовов — только cosine matching.
+
+    \\b
+    Примеры:
+      python -m concept_builder expand-dry-run -c uuid1,uuid2 -a 986380
+    """
+    cfg = load_config(CONFIG_DIR, CONFIG_NAME, ConceptBuilderConfig, overrides=override)
+
+    from concept_builder.containers import ConceptBuilderContainer
+    container = ConceptBuilderContainer(config=cfg)
+    processor = container.processor()
+
+    c_ids = [x.strip() for x in concept_ids.split(",") if x.strip()]
+    a_ids = [x.strip() for x in article_ids.split(",") if x.strip()]
+
+    # Load concepts
+    concepts = processor._load_existing_concepts(c_ids)
+    if not concepts:
+        click.echo("❌ Concepts не найдены")
+        return
+
+    # Load keywords
+    all_kws = []
+    for aid in a_ids:
+        kws = processor._load_article_keywords(aid)
+        filtered = [k for k in kws if k.confidence >= cfg.min_keyword_confidence]
+        all_kws.extend(filtered)
+
+    if not all_kws:
+        click.echo("❌ Нет keywords в указанных статьях")
+        return
+
+    # Need descriptions + embeddings for matching
+    need_desc = sum(1 for k in all_kws if not k.description)
+    need_emb = len(all_kws)  # all need embeddings for matching
+    concepts_no_emb = sum(1 for c in concepts if c.embedding is None)
+
+    click.echo(f"\n{'═' * 70}")
+    click.echo(f"  EXPAND DRY RUN — {len(concepts)} concepts × {len(a_ids)} articles")
+    click.echo(f"{'═' * 70}\n")
+
+    click.echo(f"  Существующие Concepts:")
+    for c in concepts:
+        emb_status = "✓" if c.embedding else "⚠️ нет embedding"
+        click.echo(f"    💡 {c.canonical_name} ({c.domain}) v{c.version} [{emb_status}]")
+        click.echo(f"       id: {c.id}")
+        click.echo(f"       keywords: {', '.join(c.keyword_words)}")
+        click.echo(f"       articles: {', '.join(c.source_articles)}")
+
+    click.echo(f"\n  Keywords из статей:")
+    for aid in a_ids:
+        kws_for_aid = [k for k in all_kws if k.article_id == aid]
+        no_desc = sum(1 for k in kws_for_aid if not k.description)
+        click.echo(f"    📄 {aid} — {len(kws_for_aid)} keywords, {no_desc} без описания")
+
+    click.echo(f"\n  Итого:")
+    click.echo(f"    Keywords: {len(all_kws)} (из них {need_desc} без описания)")
+    click.echo(f"    Concepts без embedding: {concepts_no_emb}")
+    click.echo(f"\n  Пороги:")
+    click.echo(f"    high_threshold (прямое): {high_threshold}")
+    click.echo(f"    low_threshold (LLM): {low_threshold}")
+    click.echo(f"\n  Оценка LLM-вызовов:")
+    # descriptions + verification + regeneration
+    est_verify = len(all_kws) // 3  # rough estimate of LLM candidates
+    est_regen = len(concepts)
+    est_total = need_desc + est_verify + est_regen
+    click.echo(f"    Описания keywords: ~{need_desc}")
+    click.echo(f"    Верификация: ~{est_verify}")
+    click.echo(f"    Перегенерация concepts: ~{est_regen}")
+    click.echo(f"    Итого: ~{est_total}")
+    click.echo()
+
+    container.graph_store().close()
 
 
 def _ensure_concept_collections(container, cfg):

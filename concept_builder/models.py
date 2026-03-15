@@ -1,6 +1,7 @@
 """Data models for cross-article concept builder."""
 from __future__ import annotations
 
+import copy
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -37,28 +38,101 @@ class ConceptNode:
     """A cross-article concept — unifies semantically similar keywords.
 
     Attributes:
-        id:                 UUID.
+        id:                 UUID (unique per version).
+        concept_group_id:   Shared UUID across all versions of same concept.
         canonical_name:     Primary name (e.g. "docker").
         domain:             Knowledge domain (e.g. "devops", "ml").
         description:        Generalized description from all source articles.
         source_articles:    List of article IDs contributing to this concept.
         source_versions:    Mapping {article_id: version} for provenance.
         keyword_words:      Which Keyword.word instances map to this concept.
+        version:            Version number (1-based, increments on expand).
+        is_active:          Whether this is the currently active version.
+        previous_version_id: UUID of the previous version (for tracing).
         embedding:          Embedding of the description.
         created_at:         Creation timestamp.
         updated_at:         Last update timestamp.
     """
 
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    concept_group_id: str = ""
     canonical_name: str = ""
     domain: str = ""
     description: str = ""
     source_articles: list[str] = field(default_factory=list)
     source_versions: dict[str, str] = field(default_factory=dict)
     keyword_words: list[str] = field(default_factory=list)
+    version: int = 1
+    is_active: bool = True
+    previous_version_id: str | None = None
     embedding: list[float] | None = None
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    def __post_init__(self):
+        if not self.concept_group_id:
+            self.concept_group_id = self.id
+
+    def evolve(
+        self,
+        new_keywords: list[KeywordContext],
+        new_description: str = "",
+        new_domain: str = "",
+    ) -> ConceptNode:
+        """Create a new version of this concept with additional keywords.
+
+        Returns a new ConceptNode with incremented version,
+        new UUID, and updated fields. The original is untouched.
+        """
+        new_kw_words = list(set(
+            self.keyword_words + [kc.word for kc in new_keywords]
+        ))
+        new_articles = list(set(
+            self.source_articles + [kc.article_id for kc in new_keywords]
+        ))
+        new_versions = dict(self.source_versions)
+        for kc in new_keywords:
+            if kc.article_id and kc.version:
+                new_versions[kc.article_id] = kc.version
+
+        return ConceptNode(
+            id=str(uuid.uuid4()),
+            concept_group_id=self.concept_group_id,
+            canonical_name=self.canonical_name,
+            domain=new_domain or self.domain,
+            description=new_description or self.description,
+            source_articles=new_articles,
+            source_versions=new_versions,
+            keyword_words=new_kw_words,
+            version=self.version + 1,
+            is_active=False,  # not active until user chooses
+            previous_version_id=self.id,
+        )
+
+
+@dataclass
+class ExpandResult:
+    """Result of expand matching for a single Concept.
+
+    Holds version candidates and user's choice.
+    """
+
+    concept_id: str
+    concept_name: str
+    domain: str
+    original_version: int
+    original: ConceptNode
+
+    # Version v(N+1): direct cosine matches
+    v_direct: ConceptNode | None = None
+    direct_keywords: list[tuple[str, float]] = field(default_factory=list)
+
+    # Version v(N+2): direct + LLM-verified
+    v_llm: ConceptNode | None = None
+    llm_keywords: list[tuple[str, float, str]] = field(default_factory=list)
+
+    # User's choice
+    chosen_version: int | None = None
 
 
 @dataclass

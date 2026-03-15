@@ -17,6 +17,7 @@ from concept_builder.models import (
     ConceptNode,
     CrossRelation,
     DryRunReport,
+    ExpandResult,
     KeywordContext,
 )
 from concept_builder.relation_builder import RelationBuilder
@@ -444,19 +445,29 @@ class CrossArticleProcessor:
                     """
                     MERGE (concept:Concept {id: $id})
                     SET concept.canonical_name = $name,
+                        concept.concept_group_id = $group_id,
                         concept.domain = $domain,
                         concept.description = $description,
                         concept.source_articles = $articles,
                         concept.source_versions = $versions,
+                        concept.keyword_words = $keyword_words,
+                        concept.version = $version,
+                        concept.is_active = $is_active,
+                        concept.previous_version_id = $prev_id,
                         concept.updated_at = $updated_at
                     ON CREATE SET concept.created_at = $created_at
                     """,
                     id=c.id,
+                    group_id=c.concept_group_id,
                     name=c.canonical_name,
                     domain=c.domain,
                     description=c.description,
                     articles=c.source_articles,
                     versions=json.dumps(c.source_versions),
+                    keyword_words=c.keyword_words,
+                    version=c.version,
+                    is_active=c.is_active,
+                    prev_id=c.previous_version_id or "",
                     created_at=c.created_at,
                     updated_at=datetime.utcnow().isoformat(),
                 )
@@ -562,3 +573,565 @@ class CrossArticleProcessor:
                     points=rel_points,
                 )
                 logger.info("Stored %d relation embeddings", len(rel_points))
+
+    # ══════════════════════════════════════════════════════════
+    # Expand — incremental concept building
+    # ══════════════════════════════════════════════════════════
+
+    def expand(
+        self,
+        concept_ids: list[str],
+        article_ids: list[str],
+        *,
+        high_threshold: float = 0.85,
+        low_threshold: float = 0.65,
+        llm_confidence_threshold: float = 0.7,
+    ) -> list[ExpandResult]:
+        """Expand existing concepts with keywords from new articles.
+
+        Returns list of ExpandResult, one per concept that had matches.
+        User must call choose_expand_versions() after reviewing.
+        """
+        import numpy as np
+
+        logger.info("═" * 60)
+        logger.info("Expand: %d concepts × %d articles", len(concept_ids), len(article_ids))
+        logger.info("  high_threshold=%.2f, low_threshold=%.2f", high_threshold, low_threshold)
+        logger.info("═" * 60)
+
+        # ── Phase 0: Load existing concepts + keywords ────────
+        concepts = self._load_existing_concepts(concept_ids)
+        if not concepts:
+            logger.error("No concepts found for given IDs")
+            return []
+
+        logger.info("  Loaded %d concepts", len(concepts))
+
+        all_keywords: list[KeywordContext] = []
+        for aid in tqdm(article_ids, desc="Loading keywords", unit="article"):
+            kws = self._load_article_keywords(aid)
+            if not kws:
+                logger.warning("  ⚠️  Article '%s' — нет keywords, пропускаем", aid)
+                continue
+            filtered = [k for k in kws if k.confidence >= self._min_confidence]
+            all_keywords.extend(filtered)
+            logger.info("  Article '%s': %d keywords", aid, len(filtered))
+
+        if not all_keywords:
+            logger.warning("No keywords found")
+            return []
+
+        # Generate descriptions + embeddings
+        need_desc = [kc for kc in all_keywords if not kc.description]
+        if need_desc:
+            logger.info("  Generating %d descriptions...", len(need_desc))
+            for kc in tqdm(need_desc, desc="Descriptions", unit="kw"):
+                if self._describer:
+                    kc.description = self._describer.describe(
+                        kc.word, kc.article_id, kc.chunk_ids,
+                    )
+                if not kc.description:
+                    kc.description = f"{kc.word} ({kc.category})"
+            self._save_keyword_descriptions(need_desc)
+
+        logger.info("  Computing keyword embeddings...")
+        descriptions = [kc.description for kc in all_keywords]
+        embeddings = self._embedder.embed_texts(descriptions)
+        for kc, emb in zip(all_keywords, embeddings):
+            kc.embedding = emb
+
+        # ── Phase 1: Match keywords → concepts ───────────────
+        logger.info("  Matching keywords to concepts...")
+        direct_matches, llm_candidates, unmatched = self._match_to_concepts(
+            all_keywords, concepts, high_threshold, low_threshold,
+        )
+
+        logger.info("  Direct matches: %d, LLM candidates: %d, Unmatched: %d",
+                     sum(len(v) for v in direct_matches.values()),
+                     sum(len(v) for v in llm_candidates.values()),
+                     len(unmatched))
+
+        results: list[ExpandResult] = []
+
+        # ── Phase 2: Create v(N+1) — direct matches ──────────
+        for concept in concepts:
+            cid = concept.id
+            directs = direct_matches.get(cid, [])
+            candidates = llm_candidates.get(cid, [])
+
+            if not directs and not candidates:
+                continue
+
+            result = ExpandResult(
+                concept_id=cid,
+                concept_name=concept.canonical_name,
+                domain=concept.domain,
+                original_version=concept.version,
+                original=concept,
+            )
+
+            if directs:
+                direct_kws = [kw for kw, sim in directs]
+                result.direct_keywords = [(kw.word, sim) for kw, sim in directs]
+
+                new_desc = self._regenerate_concept_description(
+                    concept, direct_kws,
+                )
+                result.v_direct = concept.evolve(
+                    direct_kws, new_description=new_desc,
+                )
+                logger.info(
+                    "  💡 %s v%d → v%d (+%d direct)",
+                    concept.canonical_name, concept.version,
+                    result.v_direct.version, len(directs),
+                )
+
+            # ── Phase 3: LLM-verify candidates ───────────────
+            if candidates:
+                confirmed = []
+                for kw, sim in tqdm(candidates, desc=f"LLM verify for {concept.canonical_name}", unit="kw"):
+                    belongs, confidence, relationship = self._verify_keyword_belongs(
+                        concept, kw,
+                    )
+                    if belongs and confidence >= llm_confidence_threshold:
+                        confirmed.append((kw, confidence, relationship))
+                        result.llm_keywords.append((kw.word, confidence, relationship))
+                    else:
+                        unmatched.append(kw)
+
+                # ── Phase 4: Create v(N+2) — direct + LLM ────
+                if confirmed:
+                    base = result.v_direct or concept
+                    llm_kws = [kw for kw, conf, rel in confirmed]
+                    relationships = [rel for kw, conf, rel in confirmed]
+
+                    new_desc = self._regenerate_concept_description(
+                        base, llm_kws, relationships=relationships,
+                    )
+                    result.v_llm = base.evolve(
+                        llm_kws, new_description=new_desc,
+                    )
+                    logger.info(
+                        "  💡 %s v%d → v%d (+%d LLM-verified)",
+                        concept.canonical_name, base.version,
+                        result.v_llm.version, len(confirmed),
+                    )
+
+            results.append(result)
+
+        # Return results for user review (phases 5-8 happen after user choice)
+        # Also store unmatched for later clustering
+        self._pending_unmatched = unmatched
+        self._pending_concepts = concepts
+
+        return results
+
+    def finalize_expand(
+        self,
+        results: list[ExpandResult],
+    ) -> dict:
+        """Finalize expand after user has chosen versions.
+
+        Stores chosen versions, clusters unmatched keywords,
+        creates cross-relations. Phase 5-8.
+        """
+        unmatched = getattr(self, "_pending_unmatched", [])
+        all_concepts = list(getattr(self, "_pending_concepts", []))
+
+        active_concepts: list[ConceptNode] = []
+        all_versions_to_store: list[ConceptNode] = []
+
+        for r in results:
+            if r.chosen_version is None or r.chosen_version == r.original_version:
+                # User kept original, no changes
+                active_concepts.append(r.original)
+                continue
+
+            # Deactivate old version
+            r.original.is_active = False
+            all_versions_to_store.append(r.original)
+
+            if r.v_direct:
+                if r.chosen_version == r.v_direct.version:
+                    r.v_direct.is_active = True
+                    all_versions_to_store.append(r.v_direct)
+                    active_concepts.append(r.v_direct)
+                else:
+                    r.v_direct.is_active = False
+                    all_versions_to_store.append(r.v_direct)
+
+            if r.v_llm:
+                if r.chosen_version == r.v_llm.version:
+                    r.v_llm.is_active = True
+                    all_versions_to_store.append(r.v_llm)
+                    active_concepts.append(r.v_llm)
+                else:
+                    r.v_llm.is_active = False
+                    all_versions_to_store.append(r.v_llm)
+
+        # Store all versions
+        if all_versions_to_store:
+            self._store_concepts(all_versions_to_store)
+            # Create EVOLVED_TO edges
+            for r in results:
+                if r.v_direct and r.chosen_version is not None:
+                    self._store_evolved_to(r.original.id, r.v_direct.id)
+                if r.v_llm:
+                    base_id = r.v_direct.id if r.v_direct else r.original.id
+                    self._store_evolved_to(base_id, r.v_llm.id)
+
+        # ── Phase 6: Cluster unmatched → new concepts ─────────
+        new_concepts: list[ConceptNode] = []
+        if unmatched:
+            logger.info("  Clustering %d unmatched keywords...", len(unmatched))
+
+            # Ensure embeddings
+            need_emb = [kc for kc in unmatched if kc.embedding is None]
+            if need_emb:
+                descs = [kc.description for kc in need_emb]
+                embs = self._embedder.embed_texts(descs)
+                for kc, emb in zip(need_emb, embs):
+                    kc.embedding = emb
+
+            clusters = self._clusterer.cluster(unmatched, self._similarity_threshold)
+            for cluster in clusters:
+                concept = self._create_concept_from_cluster(cluster)
+                new_concepts.append(concept)
+
+            if new_concepts:
+                self._store_concepts(new_concepts)
+                self._store_instance_of_edges(new_concepts)
+                logger.info("  Created %d new concepts", len(new_concepts))
+
+        # Update INSTANCE_OF for expanded concepts
+        for r in results:
+            if r.chosen_version is not None and r.chosen_version != r.original_version:
+                chosen = r.v_direct if r.chosen_version == (r.v_direct.version if r.v_direct else -1) else r.v_llm
+                if chosen:
+                    new_kw_words = set(chosen.keyword_words) - set(r.original.keyword_words)
+                    if new_kw_words:
+                        self._store_instance_of_for_words(list(new_kw_words), chosen.id)
+
+        # ── Phase 7: Cross-relations ──────────────────────────
+        all_active = active_concepts + new_concepts
+        relations: list[CrossRelation] = []
+        if self._relation_builder and len(all_active) >= 2:
+            logger.info("  Extracting cross-relations...")
+            relations = self._relation_builder.extract(all_active)
+
+        # Compute embeddings for new/updated concepts
+        concepts_needing_emb = [c for c in (new_concepts + all_versions_to_store)
+                                if c.is_active]
+        if concepts_needing_emb:
+            descs = [c.description for c in concepts_needing_emb]
+            embs = self._embedder.embed_texts(descs)
+            for c, emb in zip(concepts_needing_emb, embs):
+                c.embedding = emb
+
+        if relations:
+            rel_descs = [r.description for r in relations]
+            rel_embs = self._embedder.embed_texts(rel_descs)
+            for r, emb in zip(relations, rel_embs):
+                r.embedding = emb
+
+        # ── Phase 8: Store ────────────────────────────────────
+        if relations:
+            self._store_relations(relations)
+        self._store_concept_embeddings(
+            [c for c in concepts_needing_emb if c.is_active],
+            relations,
+        )
+
+        self._token_tracker.log_summary("expand")
+        self._token_tracker.reset()
+
+        return {
+            "concepts_updated": sum(1 for r in results if r.chosen_version and r.chosen_version != r.original_version),
+            "new_concepts": len(new_concepts),
+            "relations": len(relations),
+            "versions_stored": len(all_versions_to_store),
+        }
+
+    # ──────────────────────────────────────────────────────────
+    # Expand helpers
+    # ──────────────────────────────────────────────────────────
+
+    def _load_existing_concepts(self, concept_ids: list[str]) -> list[ConceptNode]:
+        """Load existing Concept nodes from Neo4j + embeddings from Qdrant."""
+        concepts = []
+        with self._gs._driver.session(database=self._gs._database) as session:
+            for cid in concept_ids:
+                result = session.run(
+                    """
+                    MATCH (c:Concept {id: $id})
+                    RETURN c.id AS id, c.concept_group_id AS group_id,
+                           c.canonical_name AS name, c.domain AS domain,
+                           c.description AS description,
+                           c.source_articles AS articles,
+                           c.source_versions AS versions,
+                           c.keyword_words AS keywords,
+                           c.version AS version,
+                           c.is_active AS is_active,
+                           c.previous_version_id AS prev_id
+                    """,
+                    id=cid,
+                ).single()
+
+                if not result:
+                    logger.warning("  Concept '%s' not found, skipping", cid)
+                    continue
+
+                versions = result.get("versions", "{}")
+                if isinstance(versions, str):
+                    try:
+                        versions = json.loads(versions)
+                    except (json.JSONDecodeError, TypeError):
+                        versions = {}
+
+                concept = ConceptNode(
+                    id=result["id"],
+                    concept_group_id=result.get("group_id") or result["id"],
+                    canonical_name=result.get("name", ""),
+                    domain=result.get("domain", ""),
+                    description=result.get("description", ""),
+                    source_articles=result.get("articles") or [],
+                    source_versions=versions,
+                    keyword_words=result.get("keywords") or [],
+                    version=result.get("version") or 1,
+                    is_active=result.get("is_active", True),
+                    previous_version_id=result.get("prev_id"),
+                )
+                concepts.append(concept)
+
+        # Load embeddings from Qdrant
+        if concepts and self._vs:
+            try:
+                concepts_collection = self.cfg.stores.qdrant.get(
+                    "concepts_collection", "concepts",
+                )
+                for concept in concepts:
+                    from qdrant_client.models import Filter, FieldCondition, MatchValue
+                    points = self._vs._client.scroll(
+                        collection_name=concepts_collection,
+                        scroll_filter=Filter(must=[
+                            FieldCondition(key="concept_id", match=MatchValue(value=concept.id)),
+                        ]),
+                        limit=1,
+                        with_vectors=True,
+                        with_payload=False,
+                    )[0]
+                    if points:
+                        concept.embedding = points[0].vector
+            except Exception as exc:
+                logger.warning("Failed to load concept embeddings: %s", exc)
+
+        return concepts
+
+    def _match_to_concepts(
+        self,
+        keywords: list[KeywordContext],
+        concepts: list[ConceptNode],
+        high_threshold: float,
+        low_threshold: float,
+    ) -> tuple[dict, dict, list]:
+        """Match keywords to concepts by cosine similarity.
+
+        Returns:
+            (direct_matches, llm_candidates, unmatched)
+        """
+        import numpy as np
+        from collections import defaultdict
+
+        direct_matches: dict[str, list[tuple[KeywordContext, float]]] = defaultdict(list)
+        llm_candidates: dict[str, list[tuple[KeywordContext, float]]] = defaultdict(list)
+        unmatched: list[KeywordContext] = []
+
+        concept_vecs = {}
+        for c in concepts:
+            if c.embedding:
+                concept_vecs[c.id] = np.array(c.embedding, dtype=np.float32)
+
+        if not concept_vecs:
+            logger.warning("No concept embeddings available for matching")
+            return {}, {}, keywords
+
+        for kw in keywords:
+            if kw.embedding is None:
+                unmatched.append(kw)
+                continue
+
+            kw_vec = np.array(kw.embedding, dtype=np.float32)
+            best_id = ""
+            best_sim = -1.0
+
+            for cid, cvec in concept_vecs.items():
+                sim = float(np.dot(kw_vec, cvec) / (
+                    np.linalg.norm(kw_vec) * np.linalg.norm(cvec) + 1e-8
+                ))
+                if sim > best_sim:
+                    best_sim = sim
+                    best_id = cid
+
+            if best_sim >= high_threshold:
+                direct_matches[best_id].append((kw, best_sim))
+            elif best_sim >= low_threshold:
+                llm_candidates[best_id].append((kw, best_sim))
+            else:
+                unmatched.append(kw)
+
+        return dict(direct_matches), dict(llm_candidates), unmatched
+
+    def _regenerate_concept_description(
+        self,
+        concept: ConceptNode,
+        new_keywords: list[KeywordContext],
+        *,
+        relationships: list[str] | None = None,
+    ) -> str:
+        """Regenerate concept description via LLM, incorporating new keywords.
+
+        If too many keywords, processes in batches.
+        """
+        if not self._describer:
+            parts = [concept.description]
+            for kc in new_keywords:
+                parts.append(f"{kc.word}: {kc.description}")
+            return "; ".join(parts)
+
+        from raptor_pipeline.summarizer.llm_summarizer import _build_llm
+        llm = _build_llm(self.cfg.llm)
+
+        # Build keyword descriptions text
+        kw_items = []
+        for i, kc in enumerate(new_keywords):
+            line = f"- {kc.word}: {kc.description}"
+            if relationships and i < len(relationships):
+                line += f" (связь: {relationships[i]})"
+            kw_items.append(line)
+
+        # Batch if needed (estimate ~100 chars/keyword)
+        max_chars = int(self.cfg.get("max_prompt_tokens", 3000) * 2.5 * 0.6)
+        batches = []
+        current_batch = []
+        current_len = 0
+        for item in kw_items:
+            if current_len + len(item) > max_chars and current_batch:
+                batches.append(current_batch)
+                current_batch = []
+                current_len = 0
+            current_batch.append(item)
+            current_len += len(item)
+        if current_batch:
+            batches.append(current_batch)
+
+        current_description = concept.description
+
+        for batch in batches:
+            kw_text = "\n".join(batch)
+            prompt = (
+                f'Текущее описание концепта "{concept.canonical_name}":\n'
+                f"{current_description}\n\n"
+                f"Новые ключевые слова с описаниями:\n{kw_text}\n\n"
+                f"Обнови описание концепта, сохранив его суть, "
+                f"но уточнив с учётом новых ключевых слов.\n"
+                f'Верни JSON: {{"description": "...", "domain": "..."}}'
+            )
+            try:
+                response = llm.invoke(prompt)
+                if self._token_tracker:
+                    self._token_tracker.track(response, "expand_description")
+                content = response.content if hasattr(response, "content") else str(response)
+                parsed = self._parse_json_response(content)
+                if parsed.get("description"):
+                    current_description = parsed["description"]
+            except Exception as exc:
+                logger.warning("Failed to regenerate description: %s", exc)
+
+        return current_description
+
+    def _verify_keyword_belongs(
+        self,
+        concept: ConceptNode,
+        keyword: KeywordContext,
+    ) -> tuple[bool, float, str]:
+        """LLM verification: does this keyword belong to this concept?
+
+        Returns:
+            (belongs, confidence, relationship_description)
+        """
+        if not self._describer:
+            return False, 0.0, ""
+
+        from raptor_pipeline.summarizer.llm_summarizer import _build_llm
+        llm = _build_llm(self.cfg.llm)
+
+        prompt = (
+            f'Концепт: "{concept.canonical_name}" ({concept.domain})\n'
+            f"Описание концепта: {concept.description}\n\n"
+            f'Ключевое слово: "{keyword.word}"\n'
+            f"Описание слова: {keyword.description}\n\n"
+            f"Может ли это ключевое слово относиться к данному концепту?\n"
+            f'Ответь JSON: {{"belongs": true/false, "confidence": 0.0-1.0, '
+            f'"relationship": "описание как связаны"}}'
+        )
+
+        try:
+            response = llm.invoke(prompt)
+            if self._token_tracker:
+                self._token_tracker.track(response, "expand_verify")
+            content = response.content if hasattr(response, "content") else str(response)
+            parsed = self._parse_json_response(content)
+            return (
+                bool(parsed.get("belongs", False)),
+                float(parsed.get("confidence", 0.0)),
+                str(parsed.get("relationship", "")),
+            )
+        except Exception as exc:
+            logger.warning("LLM verification failed for '%s': %s", keyword.word, exc)
+            return False, 0.0, ""
+
+    def _parse_json_response(self, text: str) -> dict:
+        """Parse JSON from LLM response, handling markdown fences and think tags."""
+        import re
+        text = text.strip()
+        text = re.sub(
+            r'<(thought|think)>.*?</\1>', '', text,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        if "```" in text:
+            match = re.search(r'```(?:json)?\s*(.*?)\s*```', text, re.DOTALL)
+            if match:
+                text = match.group(1)
+        try:
+            return json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
+    def _store_evolved_to(self, from_id: str, to_id: str) -> None:
+        """Create EVOLVED_TO edge between concept versions."""
+        with self._gs._driver.session(database=self._gs._database) as session:
+            session.run(
+                """
+                MATCH (a:Concept {id: $from_id})
+                MATCH (b:Concept {id: $to_id})
+                MERGE (a)-[:EVOLVED_TO]->(b)
+                """,
+                from_id=from_id,
+                to_id=to_id,
+            )
+
+    def _store_instance_of_for_words(
+        self, words: list[str], concept_id: str,
+    ) -> None:
+        """Create INSTANCE_OF edges from specific Keyword words to a Concept."""
+        with self._gs._driver.session(database=self._gs._database) as session:
+            for word in words:
+                session.run(
+                    """
+                    MATCH (k:Keyword {word: $word})
+                    MATCH (c:Concept {id: $concept_id})
+                    MERGE (k)-[:INSTANCE_OF]->(c)
+                    """,
+                    word=word,
+                    concept_id=concept_id,
+                )
