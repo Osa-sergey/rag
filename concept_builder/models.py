@@ -65,6 +65,7 @@ class ConceptNode:
     version: int = 1
     is_active: bool = True
     previous_version_id: str | None = None
+    run_id: str = ""  # identifies which process/expand run created this
     embedding: list[float] | None = None
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())

@@ -257,6 +257,7 @@ def list_concepts(domain, article_id, show_relations, full, override):
                    c.keyword_words AS keyword_words,
                    c.version AS version,
                    c.is_active AS is_active,
+                   c.run_id AS run_id,
                    count(DISTINCT r) AS relations_count,
                    collect(DISTINCT {{name: other.canonical_name, predicate: r.predicate, desc: r.description}}) AS relations
             ORDER BY c.domain, c.canonical_name, c.version
@@ -298,6 +299,9 @@ def list_concepts(domain, article_id, show_relations, full, override):
 
         click.echo(f"  💡 {name} ({domain_val}) v{version} [{active_badge}]")
         click.echo(f"     id: {cid}")
+        run = c.get("run_id", "")
+        if run:
+            click.echo(f"     run: {run}")
         click.echo(f"     keywords: {', '.join(keywords) if keywords else '—'}")
         click.echo(f"     articles: {', '.join(articles) if articles else '—'}")
         if rels:
@@ -547,6 +551,160 @@ def analyze_similarity(article_ids, override):
 
     click.echo()
     container.graph_store().close()
+
+
+# ══════════════════════════════════════════════════════════════
+# list-runs
+# ══════════════════════════════════════════════════════════════
+
+@cli.command("list-runs")
+@click.option("--override", "-o", multiple=True, help="Hydra override")
+def list_runs(override):
+    """Показать историю запусков concept_builder.
+
+    \\b
+    Примеры:
+      python -m concept_builder list-runs
+    """
+    cfg = load_config(CONFIG_DIR, CONFIG_NAME, ConceptBuilderConfig, overrides=override)
+
+    from neo4j import GraphDatabase
+    n_cfg = cfg.stores.neo4j
+    driver = GraphDatabase.driver(n_cfg.uri, auth=(n_cfg.user, n_cfg.password))
+
+    with driver.session(database=n_cfg.database) as session:
+        result = session.run(
+            """
+            MATCH (c:Concept)
+            WHERE c.run_id IS NOT NULL AND c.run_id <> ''
+            RETURN c.run_id AS run_id,
+                   count(c) AS concepts,
+                   collect(DISTINCT c.domain) AS domains,
+                   min(c.created_at) AS created_at
+            ORDER BY run_id DESC
+            """,
+        ).data()
+
+    driver.close()
+
+    if not result:
+        click.echo("Нет запусков с run_id.")
+        return
+
+    click.echo(f"\n{'═' * 70}")
+    click.echo(f"  Запуски concept_builder ({len(result)})")
+    click.echo(f"{'═' * 70}\n")
+
+    click.echo(f"  {'Run ID':<20} {'Concepts':<12} {'Domains':<30} {'Created':<25}")
+    click.echo(f"  {'─' * 85}")
+
+    for r in result:
+        run_id = r.get("run_id", "?")
+        count = r.get("concepts", 0)
+        domains = ", ".join(r.get("domains") or [])
+        created = r.get("created_at", "?")
+        click.echo(f"  {run_id:<20} {count:<12} {domains:<30} {created:<25}")
+
+    click.echo()
+
+
+# ══════════════════════════════════════════════════════════════
+# delete-concepts
+# ══════════════════════════════════════════════════════════════
+
+@cli.command("delete-concepts")
+@click.option("--run-id", "-r", default=None, help="Удалить все concepts по run_id")
+@click.option("--concept-ids", "-c", default=None, help="UUID Concept-нод через запятую")
+@click.option("--yes", "-y", is_flag=True, help="Без подтверждения")
+@click.option("--override", "-o", multiple=True, help="Hydra override")
+def delete_concepts(run_id, concept_ids, yes, override):
+    """Удалить Concept-ноды и связанные рёбра.
+
+    \\b
+    Примеры:
+      python -m concept_builder delete-concepts --run-id 20260315_141445
+      python -m concept_builder delete-concepts --concept-ids uuid1,uuid2
+      python -m concept_builder delete-concepts --run-id 20260315_141445 -y
+    """
+    if not run_id and not concept_ids:
+        raise click.UsageError("Укажите --run-id (-r) или --concept-ids (-c)")
+
+    cfg = load_config(CONFIG_DIR, CONFIG_NAME, ConceptBuilderConfig, overrides=override)
+
+    from neo4j import GraphDatabase
+    n_cfg = cfg.stores.neo4j
+    driver = GraphDatabase.driver(n_cfg.uri, auth=(n_cfg.user, n_cfg.password))
+
+    # Build filter
+    if run_id:
+        match_clause = "MATCH (c:Concept {run_id: $filter_val})"
+        filter_val = run_id
+        filter_desc = f"run_id={run_id}"
+    else:
+        ids = [x.strip() for x in concept_ids.split(",") if x.strip()]
+        match_clause = "MATCH (c:Concept) WHERE c.id IN $filter_val"
+        filter_val = ids
+        filter_desc = f"{len(ids)} concept IDs"
+
+    # Preview
+    with driver.session(database=n_cfg.database) as session:
+        preview = session.run(
+            f"""
+            {match_clause}
+            RETURN c.id AS id, c.canonical_name AS name, c.domain AS domain,
+                   c.version AS version, c.run_id AS run_id
+            """,
+            filter_val=filter_val,
+        ).data()
+
+    if not preview:
+        click.echo(f"❌ Нет concepts для {filter_desc}")
+        driver.close()
+        return
+
+    click.echo(f"\n  Concepts для удаления ({len(preview)}):")
+    for p in preview:
+        click.echo(f"    💡 {p.get('name', '?')} ({p.get('domain', '?')}) v{p.get('version', 1)} [run={p.get('run_id', '')}]")
+        click.echo(f"       id: {p.get('id', '?')}")
+
+    if not yes:
+        click.confirm(f"\n  Удалить {len(preview)} concepts и их рёбра?", abort=True)
+
+    # Delete edges + nodes
+    with driver.session(database=n_cfg.database) as session:
+        result = session.run(
+            f"""
+            {match_clause}
+            DETACH DELETE c
+            RETURN count(*) AS deleted
+            """,
+            filter_val=filter_val,
+        ).single()
+
+    deleted = result["deleted"] if result else 0
+
+    # Clean Qdrant
+    try:
+        from concept_builder.containers import ConceptBuilderContainer
+        container = ConceptBuilderContainer(config=cfg)
+        client = container.vector_store()._client
+        concepts_coll = cfg.stores.qdrant.concepts_collection
+
+        concept_ids_list = [p["id"] for p in preview]
+        from qdrant_client.models import Filter, FieldCondition, MatchAny
+        client.delete(
+            collection_name=concepts_coll,
+            points_selector=Filter(must=[
+                FieldCondition(key="concept_id", match=MatchAny(any=concept_ids_list)),
+            ]),
+        )
+        click.echo(f"  ✓ Qdrant embeddings удалены")
+    except Exception as exc:
+        click.echo(f"  ⚠️  Qdrant cleanup failed: {exc}")
+
+    driver.close()
+    click.echo(f"  ✓ Удалено {deleted} concepts (filter: {filter_desc})")
+    click.echo()
 
 
 # ══════════════════════════════════════════════════════════════

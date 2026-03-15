@@ -151,8 +151,9 @@ class CrossArticleProcessor:
         Returns:
             Summary dict with counts and created concepts.
         """
+        run_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         logger.info("═" * 60)
-        logger.info("Cross-Article Processor: %d articles", len(article_ids))
+        logger.info("Cross-Article Processor: %d articles (run=%s)", len(article_ids), run_id)
         logger.info("═" * 60)
 
         # ── Step 1: Load keywords, skip unprocessed articles ──
@@ -267,6 +268,7 @@ class CrossArticleProcessor:
         concepts: list[ConceptNode] = []
         for cluster in tqdm(clusters, desc="Creating concepts", unit="concept"):
             concept = self._create_concept_from_cluster(cluster)
+            concept.run_id = run_id
             concepts.append(concept)
 
         # ── Step 6: Extract cross-relations ───────────────────
@@ -488,6 +490,7 @@ class CrossArticleProcessor:
                         concept.version = $version,
                         concept.is_active = $is_active,
                         concept.previous_version_id = $prev_id,
+                        concept.run_id = $run_id,
                         concept.updated_at = $updated_at
                     """,
                     id=c.id,
@@ -501,6 +504,7 @@ class CrossArticleProcessor:
                     version=c.version,
                     is_active=c.is_active,
                     prev_id=c.previous_version_id or "",
+                    run_id=c.run_id or "",
                     created_at=c.created_at,
                     updated_at=datetime.utcnow().isoformat(),
                 )
