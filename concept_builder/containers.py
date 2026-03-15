@@ -10,6 +10,7 @@ from omegaconf import OmegaConf, DictConfig
 from pydantic import BaseModel
 
 from cli_base.class_resolver import resolve_class
+from interfaces import BaseConceptClusterer
 from concept_builder.schemas import ConceptBuilderConfig
 
 
@@ -80,8 +81,20 @@ def _create_inspector(graph_store, vector_store):
     return ConceptInspector(graph_store, vector_store)
 
 
+def _create_concept_clusterer(cfg: ConceptBuilderConfig):
+    """Resolve and instantiate concept clusterer."""
+    cls = resolve_class(cfg.clustering.class_, BaseConceptClusterer)
+    # GreedyConceptClusterer takes no args, HdbscanConceptClusterer takes kwargs
+    import inspect
+    sig = inspect.signature(cls.__init__)
+    params = {k: v for k, v in cfg.clustering.model_dump().items()
+              if k in sig.parameters and k != "self" and k != "class_"}
+    return cls(**params)
+
+
 def _create_processor(cfg, graph_store, vector_store, embedder,
-                       article_selector, keyword_describer, relation_builder):
+                       article_selector, keyword_describer,
+                       concept_clusterer, relation_builder):
     """Assemble the full processor with all dependencies."""
     from concept_builder.processor import CrossArticleProcessor
     return CrossArticleProcessor(
@@ -91,6 +104,7 @@ def _create_processor(cfg, graph_store, vector_store, embedder,
         embedder=embedder,
         article_selector=article_selector,
         keyword_describer=keyword_describer,
+        concept_clusterer=concept_clusterer,
         relation_builder=relation_builder,
     )
 
@@ -137,6 +151,10 @@ class ConceptBuilderContainer(containers.DeclarativeContainer):
         embedder=embedding_provider,
         tracker=token_tracker,
     )
+    concept_clusterer = providers.Singleton(
+        _create_concept_clusterer,
+        cfg=config,
+    )
     relation_builder = providers.Factory(
         _create_relation_builder,
         cfg=config,
@@ -157,5 +175,6 @@ class ConceptBuilderContainer(containers.DeclarativeContainer):
         embedder=embedding_provider,
         article_selector=article_selector,
         keyword_describer=keyword_describer,
+        concept_clusterer=concept_clusterer,
         relation_builder=relation_builder,
     )

@@ -84,6 +84,29 @@ class ConceptStoresConfig(BaseModel):
     neo4j: ConceptNeo4jConfig = Field(default_factory=ConceptNeo4jConfig)
 
 
+class ClusteringConfig(BaseModel):
+    """Clustering method configuration.
+
+    class_: fully qualified class name implementing BaseConceptClusterer.
+    Available:
+      - concept_builder.concept_clusterer.GreedyConceptClusterer (default)
+      - concept_builder.concept_clusterer.HdbscanConceptClusterer
+    """
+    class_: str = Field(
+        "concept_builder.concept_clusterer.GreedyConceptClusterer",
+        alias="class_",
+    )
+    # HDBSCAN params (ignored for greedy)
+    min_cluster_size: int = Field(2, ge=2)
+    min_samples: int = Field(1, ge=1)
+    cluster_selection_epsilon: float = Field(0.15, ge=0.0)
+    metric: str = "euclidean"
+
+    class Config:
+        extra = "allow"
+        populate_by_name = True
+
+
 class ConceptBuilderConfig(BaseModel):
     """Root configuration for Concept Builder.
 
@@ -114,6 +137,7 @@ class ConceptBuilderConfig(BaseModel):
     embeddings: ConceptEmbeddingsConfig = Field(default_factory=ConceptEmbeddingsConfig)
     prompts: ConceptPromptsConfig = Field(default_factory=ConceptPromptsConfig)
     stores: ConceptStoresConfig = Field(default_factory=ConceptStoresConfig)
+    clustering: ClusteringConfig = Field(default_factory=ClusteringConfig)
 
     class Config:
         extra = "allow"
