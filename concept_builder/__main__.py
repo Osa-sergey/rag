@@ -422,6 +422,134 @@ def trace_keyword(word, article_id, override):
 
 
 # ══════════════════════════════════════════════════════════════
+# analyze-similarity
+# ══════════════════════════════════════════════════════════════
+
+@cli.command("analyze-similarity")
+@click.option("--article-ids", "-a", required=True, help="Article IDs через запятую")
+@click.option("--override", "-o", multiple=True, help="Hydra override")
+def analyze_similarity(article_ids, override):
+    """Анализ попарных cosine similarity для подбора similarity_threshold.
+
+    \\b
+    Примеры:
+      python -m concept_builder analyze-similarity -a 986380,983714
+    """
+    import numpy as np
+    from tqdm import tqdm
+
+    cfg = load_config(CONFIG_DIR, CONFIG_NAME, ConceptBuilderConfig, overrides=override)
+
+    from concept_builder.containers import ConceptBuilderContainer
+    container = ConceptBuilderContainer(config=cfg)
+    processor = container.processor()
+
+    a_ids = [x.strip() for x in article_ids.split(",") if x.strip()]
+
+    # Load keywords
+    all_kws = []
+    for aid in a_ids:
+        kws = processor._load_article_keywords(aid)
+        filtered = [k for k in kws if k.confidence >= cfg.min_keyword_confidence]
+        all_kws.extend(filtered)
+
+    if len(all_kws) < 2:
+        click.echo("❌ Нужно минимум 2 keywords для анализа")
+        return
+
+    # Generate descriptions for those without
+    need_desc = [kc for kc in all_kws if not kc.description]
+    if need_desc:
+        click.echo(f"  Генерация {len(need_desc)} описаний...")
+        for kc in tqdm(need_desc, desc="Descriptions", unit="kw"):
+            if not kc.description:
+                kc.description = f"{kc.word} ({kc.category})"
+
+    # Deduplicate by word
+    dedup: dict[str, object] = {}
+    for kc in all_kws:
+        key = kc.word.lower()
+        if key not in dedup:
+            dedup[key] = kc
+    kws = list(dedup.values())
+
+    click.echo(f"\n  Вычисление embeddings для {len(kws)} keywords...")
+    embedder = container.embedding_provider()
+    descriptions = [kc.description for kc in kws]
+    embeddings = embedder.embed_texts(descriptions)
+    vectors = np.array(embeddings, dtype=np.float32)
+
+    # Normalize
+    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+    norms = np.where(norms == 0, 1, norms)
+    vectors_norm = vectors / norms
+
+    # Pairwise cosine similarity (upper triangle)
+    sim_matrix = vectors_norm @ vectors_norm.T
+    n = len(kws)
+    upper_sims = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            upper_sims.append((sim_matrix[i, j], kws[i].word, kws[j].word))
+
+    sims = np.array([s[0] for s in upper_sims])
+
+    click.echo(f"\n{'═' * 70}")
+    click.echo(f"  Анализ similarity — {len(kws)} keywords, {len(sims)} пар")
+    click.echo(f"{'═' * 70}")
+
+    # Distribution
+    click.echo(f"\n  📊 Распределение cosine similarity:")
+    percentiles = [5, 10, 25, 50, 75, 90, 95, 99]
+    click.echo(f"    {'Перцентиль':<15} {'Значение':<10}")
+    click.echo(f"    {'─' * 25}")
+    for p in percentiles:
+        val = np.percentile(sims, p)
+        click.echo(f"    P{p:<14} {val:.4f}")
+    click.echo(f"    {'─' * 25}")
+    click.echo(f"    {'min':<15} {sims.min():.4f}")
+    click.echo(f"    {'max':<15} {sims.max():.4f}")
+    click.echo(f"    {'mean':<15} {sims.mean():.4f}")
+    click.echo(f"    {'std':<15} {sims.std():.4f}")
+
+    # Threshold → clusters table
+    from concept_builder.concept_clusterer import GreedyConceptClusterer
+    greedy = GreedyConceptClusterer()
+
+    click.echo(f"\n  📋 Порог → количество кластеров (greedy):")
+    click.echo(f"    {'Threshold':<12} {'Кластеры':<12} {'Avg size':<12} {'Max size':<12} {'Singletons':<12}")
+    click.echo(f"    {'─' * 60}")
+
+    thresholds = [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95]
+    for t in thresholds:
+        clusters = greedy.cluster(kws, similarity_threshold=t)
+        sizes = [len(c) for c in clusters]
+        singletons = sum(1 for s in sizes if s == 1)
+        avg_size = sum(sizes) / len(sizes) if sizes else 0
+        max_size = max(sizes) if sizes else 0
+        click.echo(f"    {t:<12.2f} {len(clusters):<12} {avg_size:<12.1f} {max_size:<12} {singletons:<12}")
+
+    # Top-10 most similar pairs
+    click.echo(f"\n  🔗 Топ-10 наиболее похожих пар:")
+    sorted_sims = sorted(upper_sims, key=lambda x: x[0], reverse=True)[:10]
+    for sim_val, w1, w2 in sorted_sims:
+        click.echo(f"    {sim_val:.4f}  {w1} ↔ {w2}")
+
+    # Top-10 pairs near current threshold
+    current_t = cfg.similarity_threshold
+    near_threshold = sorted(
+        upper_sims, key=lambda x: abs(x[0] - current_t),
+    )[:10]
+    click.echo(f"\n  🎯 Пары вблизи текущего порога ({current_t:.2f}):")
+    for sim_val, w1, w2 in sorted(near_threshold, key=lambda x: x[0], reverse=True):
+        marker = "✓" if sim_val >= current_t else "✗"
+        click.echo(f"    {marker} {sim_val:.4f}  {w1} ↔ {w2}")
+
+    click.echo()
+    container.graph_store().close()
+
+
+# ══════════════════════════════════════════════════════════════
 # Helpers
 # ══════════════════════════════════════════════════════════════
 
