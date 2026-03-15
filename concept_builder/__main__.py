@@ -620,15 +620,14 @@ def list_runs(override):
 def delete_concepts(run_id, concept_ids, yes, override):
     """Удалить Concept-ноды и связанные рёбра.
 
+    Без флагов — удаляет все concepts (с подтверждением).
+
     \\b
     Примеры:
+      python -m concept_builder delete-concepts
       python -m concept_builder delete-concepts --run-id 20260315_141445
-      python -m concept_builder delete-concepts --concept-ids uuid1,uuid2
-      python -m concept_builder delete-concepts --run-id 20260315_141445 -y
+      python -m concept_builder delete-concepts --concept-ids uuid1,uuid2 -y
     """
-    if not run_id and not concept_ids:
-        raise click.UsageError("Укажите --run-id (-r) или --concept-ids (-c)")
-
     cfg = load_config(CONFIG_DIR, CONFIG_NAME, ConceptBuilderConfig, overrides=override)
 
     from neo4j import GraphDatabase
@@ -640,11 +639,17 @@ def delete_concepts(run_id, concept_ids, yes, override):
         match_clause = "MATCH (c:Concept {run_id: $filter_val})"
         filter_val = run_id
         filter_desc = f"run_id={run_id}"
-    else:
+    elif concept_ids:
         ids = [x.strip() for x in concept_ids.split(",") if x.strip()]
         match_clause = "MATCH (c:Concept) WHERE c.id IN $filter_val"
         filter_val = ids
         filter_desc = f"{len(ids)} concept IDs"
+    else:
+        match_clause = "MATCH (c:Concept)"
+        filter_val = None
+        filter_desc = "ВСЕ concepts"
+
+    params = {"filter_val": filter_val} if filter_val is not None else {}
 
     # Preview
     with driver.session(database=n_cfg.database) as session:
@@ -654,7 +659,7 @@ def delete_concepts(run_id, concept_ids, yes, override):
             RETURN c.id AS id, c.canonical_name AS name, c.domain AS domain,
                    c.version AS version, c.run_id AS run_id
             """,
-            filter_val=filter_val,
+            **params,
         ).data()
 
     if not preview:
@@ -678,7 +683,7 @@ def delete_concepts(run_id, concept_ids, yes, override):
             DETACH DELETE c
             RETURN count(*) AS deleted
             """,
-            filter_val=filter_val,
+            **params,
         ).single()
 
     deleted = result["deleted"] if result else 0
