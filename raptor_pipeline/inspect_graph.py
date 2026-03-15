@@ -59,7 +59,7 @@ def _fix_cyrillic_args():
 _fix_cyrillic_args()
 
 
-def main(cfg: DictConfig) -> None:
+def main(cfg: DictConfig, article_id: str | None = None, min_confidence: float | None = None) -> None:
     """Core inspect-graph logic, callable from Click or standalone."""
     # 1. Connect to Neo4j
     n_cfg = cfg.stores.neo4j
@@ -71,27 +71,111 @@ def main(cfg: DictConfig) -> None:
     q_collection = q_cfg.collection_name
 
     keyword_to_inspect = cfg.get("word", None)
+    # article_id can come from function arg or config
+    filter_article = article_id or cfg.get("article_id", None)
 
     with driver.session(database=n_cfg.database) as session:
         if not keyword_to_inspect:
-            # Mode A: List keywords
-            print("\nAvailable Keywords in Neo4j:")
-            print("=" * 60)
-            result = session.run(
-                "MATCH (k:Keyword) RETURN k.word AS word, k.category AS category, "
-                "k.original_words AS original_words ORDER BY word"
-            )
-            keywords = list(result)
-            if not keywords:
-                print("No keywords found in Neo4j.")
-            for kw in keywords:
-                orig = kw.get('original_words') or []
-                orig_str = f"  ← merged: [{', '.join(orig)}]" if orig else ""
-                print(f"- {kw['word']} ({kw['category']}){orig_str}")
-            print("=" * 60)
-            print(f"Total: {len(keywords)} keywords")
-            print("\nTip: Run with 'word=\"YOUR_KEYWORD\"' to see relationships and source text.")
-            print("     Для кириллицы:  word=оптимизация  (кавычки не нужны)")
+            if filter_article:
+                # Mode A2: List keywords for a specific article (with confidence)
+                conf_label = f" (confidence ≥ {min_confidence})" if min_confidence else ""
+                print(f"\nKeywords for Article '{filter_article}'{conf_label}:")
+                print("=" * 60)
+                result = session.run(
+                    """
+                    MATCH (a:Article {id: $article_id})-[r:HAS_KEYWORD]->(k:Keyword)
+                    RETURN k.word AS word, k.category AS category,
+                           r.confidence AS confidence,
+                           k.original_words AS original_words,
+                           r.chunk_ids AS chunk_ids
+                    ORDER BY r.confidence DESC, word
+                    """,
+                    article_id=filter_article,
+                )
+                all_keywords = list(result)
+                # Apply min_confidence filter
+                if min_confidence is not None:
+                    keywords = [kw for kw in all_keywords if (kw.get('confidence') or 0) >= min_confidence]
+                else:
+                    keywords = all_keywords
+                if not all_keywords:
+                    print(f"No keywords found for article '{filter_article}'.")
+                    # Debug: check if article exists
+                    art = session.run(
+                        "MATCH (a:Article {id: $id}) RETURN a.id AS id, a.article_name AS name",
+                        id=filter_article,
+                    ).single()
+                    if art:
+                        print(f"  Article exists: {art['id']} ({art.get('name', '?')})")
+                        raw_count = session.run(
+                            "MATCH (a:Article {id: $id})-[r:HAS_KEYWORD]->(k) RETURN count(r) AS cnt",
+                            id=filter_article,
+                        ).single()
+                        print(f"  Total HAS_KEYWORD edges: {raw_count['cnt'] if raw_count else 0}")
+                    else:
+                        print(f"  Article '{filter_article}' NOT FOUND in Neo4j.")
+                        similar = session.run(
+                            "MATCH (a:Article) WHERE a.id CONTAINS $partial OR a.article_name CONTAINS $partial "
+                            "RETURN a.id AS id, a.article_name AS name LIMIT 5",
+                            partial=filter_article,
+                        ).data()
+                        if similar:
+                            print(f"  Similar articles: {similar}")
+                elif not keywords:
+                    print(f"No keywords with confidence ≥ {min_confidence} (total: {len(all_keywords)})")
+                else:
+                    for kw in keywords:
+                        conf = kw.get('confidence')
+                        conf_str = f"  conf={conf:.2f}" if conf is not None else "  conf=NULL"
+                        orig = kw.get('original_words') or []
+                        orig_str = f"  ← merged: [{', '.join(orig)}]" if orig else ""
+                        chunks = kw.get('chunk_ids') or []
+                        chunks_str = f"  [{len(chunks)} chunks]" if chunks else ""
+                        print(f"- {kw['word']} ({kw['category']}){conf_str}{chunks_str}{orig_str}")
+                print("=" * 60)
+                shown = len(keywords)
+                total = len(all_keywords)
+                if min_confidence is not None and total != shown:
+                    print(f"Shown: {shown}/{total} keywords (confidence ≥ {min_confidence})")
+                else:
+                    print(f"Total: {total} keywords")
+                # Show confidence distribution
+                if all_keywords:
+                    confs = [kw.get('confidence') or 0 for kw in all_keywords]
+                    high = sum(1 for c in confs if c >= 0.8)
+                    med = sum(1 for c in confs if 0.5 <= c < 0.8)
+                    low = sum(1 for c in confs if c < 0.5)
+                    print(f"  Confidence: ≥0.8: {high}, 0.5-0.8: {med}, <0.5: {low}")
+            else:
+                # Mode A1: List all keywords globally
+                print("\nAvailable Keywords in Neo4j:")
+                print("=" * 60)
+                result = session.run(
+                    """
+                    MATCH (k:Keyword)
+                    OPTIONAL MATCH ()-[r:HAS_KEYWORD]->(k)
+                    RETURN k.word AS word, k.category AS category,
+                           k.original_words AS original_words,
+                           max(r.confidence) AS max_confidence,
+                           count(r) AS article_count
+                    ORDER BY word
+                    """
+                )
+                keywords = list(result)
+                if not keywords:
+                    print("No keywords found in Neo4j.")
+                for kw in keywords:
+                    conf = kw.get('max_confidence')
+                    conf_str = f"  conf={conf:.2f}" if conf is not None else ""
+                    art_count = kw.get('article_count', 0)
+                    art_str = f"  [{art_count} articles]" if art_count else ""
+                    orig = kw.get('original_words') or []
+                    orig_str = f"  ← merged: [{', '.join(orig)}]" if orig else ""
+                    print(f"- {kw['word']} ({kw['category']}){conf_str}{art_str}{orig_str}")
+                print("=" * 60)
+                print(f"Total: {len(keywords)} keywords")
+            print("\nTip: Run with '--word YOUR_KEYWORD' to see relationships and source text.")
+            print("     Use '--article-id ID' to filter by article.")
         
         else:
             # Mode B: Inspect specific keyword
@@ -162,7 +246,8 @@ def main(cfg: DictConfig) -> None:
             result = session.run(
                 """
                 MATCH (a:Article)-[r:HAS_KEYWORD]->(k:Keyword {word: $word})
-                RETURN a.id AS article_id, r.chunk_ids AS chunk_ids
+                RETURN a.id AS article_id, a.article_name AS article_name,
+                       r.confidence AS confidence, r.chunk_ids AS chunk_ids
                 """,
                 word=keyword_to_inspect
             )
@@ -172,7 +257,11 @@ def main(cfg: DictConfig) -> None:
                 for art in articles:
                     c_ids = art.get('chunk_ids', []) or []
                     if isinstance(c_ids, str): c_ids = [c_ids]
-                    print(f"- Article: {art['article_id']} (Chunks: {', '.join(c_ids)})")
+                    conf = art.get('confidence')
+                    conf_str = f" conf={conf:.2f}" if conf is not None else " conf=NULL"
+                    name = art.get('article_name') or ''
+                    name_str = f" ({name})" if name else ''
+                    print(f"- Article: {art['article_id']}{name_str}{conf_str} (Chunks: {', '.join(c_ids)})")
 
             # 3. Cross-article references (REFERENCES edges) involving this keyword/article
             result = session.run(

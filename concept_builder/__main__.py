@@ -98,13 +98,34 @@ def dry_run(base_article, strategy, max_articles, article_ids, no_check_connecti
     for aid in report.articles:
         name = report.article_names.get(aid, aid)
         kw_count = report.keywords_per_article.get(aid, 0)
-        click.echo(f"  📄 {aid} ({name}) — {kw_count} keywords (≥{cfg.min_keyword_confidence})")
+        total_kw = report.raw_keywords_per_article.get(aid, 0)
+        click.echo(
+            f"  📄 {aid} ({name}) — {kw_count}/{total_kw} keywords "
+            f"(≥{cfg.min_keyword_confidence} / total)"
+        )
+        # Show confidence distribution for this article
+        dist = report.confidence_distributions.get(aid, {})
+        if dist:
+            click.echo(
+                f"     confidence: ≥0.8: {dist.get('high', 0)}, "
+                f"0.5-0.8: {dist.get('med', 0)}, "
+                f"<0.5: {dist.get('low', 0)}, "
+                f"NULL: {dist.get('null', 0)}"
+            )
+        # Show sample confidence values if all are below threshold
+        sample_confs = report.sample_confidences.get(aid, [])
+        if kw_count == 0 and sample_confs:
+            click.echo(f"     ⚠️  sample confidence values: {sample_confs[:10]}")
 
     click.echo(f"\n  Связи между статьями ({len(report.references)}):")
-    for src, tgt in report.references:
-        click.echo(f"    {src} → {tgt}")
+    if report.references:
+        for src, tgt in report.references:
+            click.echo(f"    {src} → {tgt}")
+    else:
+        click.echo("    ⚠️  Нет REFERENCES рёбер между выбранными статьями")
+        click.echo("    Проверьте: python -m raptor_pipeline inspect-graph --list-articles")
 
-    click.echo(f"\n  Всего keywords: {report.total_keywords}")
+    click.echo(f"\n  Всего keywords (≥{cfg.min_keyword_confidence}): {report.total_keywords}")
     click.echo(f"  Оценка LLM-вызовов: ~{report.estimated_llm_calls}")
     click.echo()
 

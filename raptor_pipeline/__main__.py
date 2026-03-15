@@ -226,15 +226,19 @@ def inspect_tree(article_id, full_text, list_articles, override):
 
 @cli.command("inspect-graph")
 @click.option("--word", "-w", default=None, help="Ключевое слово для инспекции")
+@click.option("--article-id", "-a", default=None, help="Фильтр по article_id (показать keywords статьи с confidence)")
+@click.option("--min-confidence", "-c", type=float, default=None, help="Показать только keywords с confidence ≥ значения")
 @click.option("--list-articles", is_flag=True, help="Показать список статей в хранилищах")
 @click.option("--override", "-o", multiple=True, help="Hydra override (key=value)")
-def inspect_graph(word, list_articles, override):
+def inspect_graph(word, article_id, min_confidence, list_articles, override):
     """Просмотр Knowledge Graph (Neo4j) с текстами из Qdrant.
 
     \\b
     Примеры:
       python -m raptor_pipeline inspect-graph
       python -m raptor_pipeline inspect-graph --word оптимизация
+      python -m raptor_pipeline inspect-graph --article-id 986380
+      python -m raptor_pipeline inspect-graph --article-id 986380 --min-confidence 0.8
       python -m raptor_pipeline inspect-graph --list-articles
     """
     overrides = {}
@@ -254,7 +258,11 @@ def inspect_graph(word, list_articles, override):
 
     raw = cfg.model_dump(by_alias=True)
     omegacfg = OmegaConf.create(raw)
-    _inspect_graph_main(omegacfg)
+    _inspect_graph_main(
+        omegacfg,
+        article_id=str(article_id) if article_id else None,
+        min_confidence=min_confidence,
+    )
 
 
 if __name__ == "__main__":

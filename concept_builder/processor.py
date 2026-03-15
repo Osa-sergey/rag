@@ -78,7 +78,22 @@ class CrossArticleProcessor:
             kws = self._load_article_keywords(aid)
             filtered = [k for k in kws if k.confidence >= self._min_confidence]
             report.keywords_per_article[aid] = len(filtered)
+            report.raw_keywords_per_article[aid] = len(kws)
             report.total_keywords += len(filtered)
+
+            # Confidence distribution for diagnostics
+            high = sum(1 for k in kws if k.confidence >= 0.8)
+            med = sum(1 for k in kws if 0.5 <= k.confidence < 0.8)
+            low = sum(1 for k in kws if 0.0 < k.confidence < 0.5)
+            null_count = sum(1 for k in kws if k.confidence == 0.0)
+            report.confidence_distributions[aid] = {
+                "high": high, "med": med, "low": low, "null": null_count,
+            }
+
+            # Sample confidence values for debugging
+            report.sample_confidences[aid] = sorted(
+                [k.confidence for k in kws], reverse=True,
+            )[:10]
 
             # Get article name
             with self._gs._driver.session(database=self._gs._database) as session:
@@ -93,18 +108,17 @@ class CrossArticleProcessor:
         with self._gs._driver.session(database=self._gs._database) as session:
             refs = session.run(
                 """
-                MATCH (a:Article)-[r:REFERENCES]->(b:Article)
-                WHERE a.id IN $ids AND b.id IN $ids
-                RETURN a.id AS source, b.id AS target
+                MATCH (a:Article)-[r:REFERENCES]-(b:Article)
+                WHERE a.id IN $ids AND b.id IN $ids AND a.id <> b.id
+                RETURN DISTINCT
+                    CASE WHEN a.id < b.id THEN a.id ELSE b.id END AS source,
+                    CASE WHEN a.id < b.id THEN b.id ELSE a.id END AS target
                 """,
                 ids=article_ids,
             ).data()
             report.references = [(r["source"], r["target"]) for r in refs]
 
-        # Estimate LLM calls:
-        # - 1 per keyword description
-        # - 1 for concept summary per estimated cluster (~keywords/3)
-        # - 1 for cross-relations
+        # Estimate LLM calls
         est_clusters = max(1, report.total_keywords // 3)
         report.estimated_llm_calls = report.total_keywords + est_clusters + 1
 

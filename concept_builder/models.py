@@ -94,7 +94,10 @@ class DryRunReport:
         articles:           List of article IDs selected.
         article_names:      Mapping article_id → article_name.
         total_keywords:     Total keywords (confidence ≥ threshold).
-        keywords_per_article: {article_id: count}.
+        keywords_per_article: {article_id: count with confidence ≥ threshold}.
+        raw_keywords_per_article: {article_id: total count including low confidence}.
+        confidence_distributions: {article_id: {high, med, low, null} counts}.
+        sample_confidences: {article_id: [first 10 confidence values]} for debugging.
         references:         List of (source, target) article pairs.
         estimated_llm_calls: Estimated number of LLM calls.
     """
@@ -103,5 +106,8 @@ class DryRunReport:
     article_names: dict[str, str] = field(default_factory=dict)
     total_keywords: int = 0
     keywords_per_article: dict[str, int] = field(default_factory=dict)
+    raw_keywords_per_article: dict[str, int] = field(default_factory=dict)
+    confidence_distributions: dict[str, dict] = field(default_factory=dict)
+    sample_confidences: dict[str, list] = field(default_factory=dict)
     references: list[tuple[str, str]] = field(default_factory=list)
     estimated_llm_calls: int = 0
