@@ -677,7 +677,220 @@ def delete_concepts(run_id, concept_ids, yes, override):
 
 
 # ══════════════════════════════════════════════════════════════
-# Helpers
+# add-concept
+# ══════════════════════════════════════════════════════════════
+
+@cli.command("add-concept")
+@click.option("--name", "-n", required=True, help="Canonical name for the concept")
+@click.option("--description", "-d", required=True, help="Description of the concept")
+@click.option("--domain", default="general", help="Knowledge domain (e.g. devops, ml)")
+@click.option("--article-ids", "-a", default=None,
+              help="Comma-separated article IDs to search for matching chunks")
+@click.option("--top-k", "-k", type=int, default=20,
+              help="Max chunks to search per article (default 20)")
+@click.option("--min-score", type=float, default=0.5,
+              help="Min cosine similarity to match chunks (default 0.5)")
+@click.option("--override", "-o", multiple=True, help="Hydra override")
+def add_concept(name, description, domain, article_ids, top_k, min_score, override):
+    """Manually create a concept and find matching chunks in articles.
+
+    \\b
+    Examples:
+      python -m concept_builder add-concept -n "Docker" -d "Платформа контейнеризации" -a 986380
+      python -m concept_builder add-concept -n "CI/CD" -d "Continuous Integration" --domain devops
+    """
+    import json
+    from datetime import datetime
+    from concept_builder.models import ConceptNode
+
+    cfg = load_config(CONFIG_DIR, CONFIG_NAME, ConceptBuilderConfig, overrides=override)
+
+    from concept_builder.containers import ConceptBuilderContainer
+    container = ConceptBuilderContainer(config=cfg)
+
+    gs = container.graph_store()
+    vs = container.vector_store()
+
+    # Embed the description
+    from raptor_pipeline.embeddings.providers import create_embedding_provider
+    embedder = create_embedding_provider(cfg.embeddings)
+
+    click.echo(f"\n{'═' * 70}")
+    click.echo(f"  Adding concept: {name} ({domain})")
+    click.echo(f"{'═' * 70}")
+    click.echo(f"  Description: {description}")
+
+    desc_embedding = embedder.embed_texts([description])[0]
+
+    # Search raptor_chunks for matching chunks
+    articles = []
+    if article_ids:
+        articles = [a.strip() for a in article_ids.split(",") if a.strip()]
+
+    from qdrant_client.models import Filter, FieldCondition, MatchValue
+
+    matched_keywords: set[str] = set()
+    matched_chunks: list[dict] = []
+
+    if articles:
+        click.echo(f"\n  Searching chunks in {len(articles)} articles...")
+        for art_id in articles:
+            try:
+                results = vs._client.query_points(
+                    collection_name=vs._collection,
+                    query=desc_embedding,
+                    limit=top_k,
+                    query_filter=Filter(must=[
+                        FieldCondition(key="article_id", match=MatchValue(value=art_id)),
+                    ]),
+                    with_payload=True,
+                )
+                for r in results.points:
+                    if r.score >= min_score:
+                        payload = r.payload or {}
+                        matched_chunks.append({
+                            "article_id": art_id,
+                            "node_id": payload.get("node_id", ""),
+                            "level": payload.get("level", 0),
+                            "score": r.score,
+                            "text": payload.get("text", "")[:200],
+                            "keywords": payload.get("keywords", []),
+                        })
+                        for kw in payload.get("keywords", []):
+                            matched_keywords.add(kw)
+            except Exception as exc:
+                click.echo(f"  ⚠️  Search in article {art_id} failed: {exc}")
+    else:
+        # Search without article filter
+        click.echo(f"\n  Searching all chunks (no article filter)...")
+        try:
+            results = vs._client.query_points(
+                collection_name=vs._collection,
+                query=desc_embedding,
+                limit=top_k,
+                with_payload=True,
+            )
+            for r in results.points:
+                if r.score >= min_score:
+                    payload = r.payload or {}
+                    art_id = payload.get("article_id", "")
+                    if art_id:
+                        articles.append(art_id)
+                    matched_chunks.append({
+                        "article_id": art_id,
+                        "node_id": payload.get("node_id", ""),
+                        "level": payload.get("level", 0),
+                        "score": r.score,
+                        "text": payload.get("text", "")[:200],
+                        "keywords": payload.get("keywords", []),
+                    })
+                    for kw in payload.get("keywords", []):
+                        matched_keywords.add(kw)
+        except Exception as exc:
+            click.echo(f"  ⚠️  Search failed: {exc}")
+        articles = list(set(articles))
+
+    # Display matched chunks
+    click.echo(f"\n  📄 Matched chunks ({len(matched_chunks)} with score ≥ {min_score}):")
+    for mc in sorted(matched_chunks, key=lambda x: x["score"], reverse=True):
+        text = mc["text"].replace("\n", " ")
+        click.echo(f"    [{mc['score']:.3f}] level={mc['level']} art={mc['article_id']}")
+        click.echo(f"      {text}")
+        if mc["keywords"]:
+            click.echo(f"      keywords: {', '.join(mc['keywords'][:8])}")
+
+    click.echo(f"\n  🔑 Matched keywords ({len(matched_keywords)}): {', '.join(sorted(matched_keywords)[:20])}")
+
+    # Create concept
+    run_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S") + "_manual"
+    concept = ConceptNode(
+        canonical_name=name,
+        domain=domain,
+        description=description,
+        source_articles=articles,
+        keyword_words=sorted(matched_keywords),
+        run_id=run_id,
+        embedding=desc_embedding,
+    )
+
+    # Store in Neo4j
+    with gs._driver.session(database=gs._database) as session:
+        session.run(
+            """
+            MERGE (concept:Concept {id: $id})
+            ON CREATE SET concept.created_at = $created_at
+            SET concept.canonical_name = $name,
+                concept.concept_group_id = $group_id,
+                concept.domain = $domain,
+                concept.description = $description,
+                concept.source_articles = $articles,
+                concept.keyword_words = $keyword_words,
+                concept.version = 1,
+                concept.is_active = true,
+                concept.run_id = $run_id,
+                concept.updated_at = $updated_at
+            """,
+            id=concept.id,
+            group_id=concept.concept_group_id,
+            name=concept.canonical_name,
+            domain=concept.domain,
+            description=concept.description,
+            articles=concept.source_articles,
+            keyword_words=concept.keyword_words,
+            run_id=concept.run_id,
+            created_at=concept.created_at,
+            updated_at=datetime.utcnow().isoformat(),
+        )
+
+        # Create INSTANCE_OF edges from matching keywords
+        for kw in matched_keywords:
+            session.run(
+                """
+                MATCH (k:Keyword {word: $word})
+                MATCH (c:Concept {id: $concept_id})
+                MERGE (k)-[:INSTANCE_OF]->(c)
+                """,
+                word=kw,
+                concept_id=concept.id,
+            )
+
+    click.echo(f"\n  ✅ Concept stored in Neo4j: {concept.id}")
+
+    # Store embedding in Qdrant
+    try:
+        from qdrant_client.models import PointStruct
+        concepts_collection = cfg.stores.qdrant.get("concepts_collection", "concepts")
+        vs._client.upsert(
+            collection_name=concepts_collection,
+            points=[PointStruct(
+                id=hash(concept.id) % (2**63),
+                vector=desc_embedding,
+                payload={
+                    "concept_id": concept.id,
+                    "canonical_name": concept.canonical_name,
+                    "domain": concept.domain,
+                    "description": concept.description,
+                    "source_articles": concept.source_articles,
+                    "keyword_words": concept.keyword_words,
+                },
+            )],
+        )
+        click.echo(f"  ✅ Embedding stored in Qdrant ({concepts_collection})")
+    except Exception as exc:
+        click.echo(f"  ⚠️  Qdrant storage failed: {exc}")
+
+    click.echo(f"\n  Summary:")
+    click.echo(f"    Name: {concept.canonical_name}")
+    click.echo(f"    Domain: {concept.domain}")
+    click.echo(f"    ID: {concept.id}")
+    click.echo(f"    Run: {concept.run_id}")
+    click.echo(f"    Keywords: {len(matched_keywords)}")
+    click.echo(f"    Articles: {', '.join(articles) if articles else '—'}")
+    click.echo()
+
+    gs.close()
+
+
 # ══════════════════════════════════════════════════════════════
 
 def _select_articles(selector, cfg, base_article, strategy, max_articles,
