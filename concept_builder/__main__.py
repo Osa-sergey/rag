@@ -825,12 +825,31 @@ def add_concept(name, description, domain, article_ids, high_threshold, low_thre
         gs.close()
         return
 
-    # ── Phase 4: Create and store concept ──
+    # ── Phase 4: Regenerate description based on matched keywords ──
+    matched_kws = [kc for kc, _ in direct_matches]
+    click.echo(f"\n  📝 Regenerating description based on {len(matched_kws)} keywords...")
+
+    # Create a temporary concept with user's base description
+    tmp_concept = ConceptNode(
+        canonical_name=name,
+        domain=domain,
+        description=description,
+    )
+    enriched_description = processor._regenerate_concept_description(
+        tmp_concept, matched_kws,
+    )
+    click.echo(f"\n  Original:  {description}")
+    click.echo(f"  Enriched:  {enriched_description[:300]}")
+
+    # Re-embed the enriched description
+    desc_embedding = processor._embedder.embed_texts([enriched_description])[0]
+
+    # ── Phase 5: Create and store concept ──
     run_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S") + "_manual"
     concept = ConceptNode(
         canonical_name=name,
         domain=domain,
-        description=description,
+        description=enriched_description,
         source_articles=matched_articles if matched_articles else articles,
         keyword_words=matched_keywords,
         run_id=run_id,
