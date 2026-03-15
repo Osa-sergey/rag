@@ -1,0 +1,54 @@
+# Retrieval module config
+
+log_level: INFO
+
+# ── LLM (for query rephrasing) ────────────────────────────────
+llm:
+  provider: llama_cpp
+  model_name: gemma-3-12b-it
+  base_url: http://localhost:8080/v1
+  api_key: null
+  temperature: 0.5
+  max_tokens: 512
+
+# ── Embeddings ────────────────────────────────────────────────
+embeddings:
+  class_: raptor_pipeline.embeddings.providers.HuggingFaceEmbeddingProvider
+  provider: huggingface
+  model_name: sergeyzh/BERTA
+  embedding_dim: 768
+  model_kwargs:
+    device: cpu
+  encode_kwargs:
+    normalize_embeddings: true
+
+# ── Stores ────────────────────────────────────────────────────
+stores:
+  qdrant:
+    host: localhost
+    port: 6333
+    chunks_collection: raptor_chunks
+    concepts_collection: concepts
+    cross_relations_collection: cross_relations
+    vector_size: 768
+
+  neo4j:
+    class_: stores.graph_store.Neo4jGraphStore
+    uri: bolt://localhost:7687
+    user: neo4j
+    password: raptor_password
+    database: neo4j
+
+# ── Retrieval defaults ────────────────────────────────────────
+top_k: 10
+
+rephrase_prompt:
+  template: |
+    Перефразируй следующий поисковый запрос 3 разными способами
+    для поиска в базе знаний по IT-статьям.
+    Используй синонимы, другие формулировки и переводы (рус/англ).
+
+    Запрос: {query}
+
+    Верни ТОЛЬКО список из 3 вариантов, каждый на новой строке,
+    без нумерации и без пояснений.
