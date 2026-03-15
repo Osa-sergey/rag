@@ -66,6 +66,7 @@ class ConceptNode:
     is_active: bool = True
     previous_version_id: str | None = None
     run_id: str = ""  # identifies which process/expand run created this
+    is_manual: bool = False  # True if concept was manually created via add-concept
     embedding: list[float] | None = None
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())

@@ -685,22 +685,27 @@ def delete_concepts(run_id, concept_ids, yes, override):
 @click.option("--description", "-d", required=True, help="Description of the concept")
 @click.option("--domain", default="general", help="Knowledge domain (e.g. devops, ml)")
 @click.option("--article-ids", "-a", default=None,
-              help="Comma-separated article IDs to search for matching chunks")
-@click.option("--top-k", "-k", type=int, default=20,
-              help="Max chunks to search per article (default 20)")
-@click.option("--min-score", type=float, default=0.5,
-              help="Min cosine similarity to match chunks (default 0.5)")
+              help="Comma-separated article IDs to search for matching keywords")
+@click.option("--high-threshold", type=float, default=0.75,
+              help="Cosine ≥ this → direct keyword match (default 0.75)")
+@click.option("--low-threshold", type=float, default=0.55,
+              help="Cosine ≥ this → candidate for review (default 0.55)")
 @click.option("--override", "-o", multiple=True, help="Hydra override")
-def add_concept(name, description, domain, article_ids, top_k, min_score, override):
-    """Manually create a concept and find matching chunks in articles.
+def add_concept(name, description, domain, article_ids, high_threshold, low_threshold, override):
+    """Manually create a concept and find matching keywords in articles.
+
+    Uses the same approach as 'expand': loads keywords from articles,
+    computes embeddings, then matches against the concept description
+    by cosine similarity.
 
     \\b
     Examples:
       python -m concept_builder add-concept -n "Docker" -d "Платформа контейнеризации" -a 986380
       python -m concept_builder add-concept -n "CI/CD" -d "Continuous Integration" --domain devops
     """
-    import json
+    import numpy as np
     from datetime import datetime
+    from tqdm import tqdm
     from concept_builder.models import ConceptNode
 
     cfg = load_config(CONFIG_DIR, CONFIG_NAME, ConceptBuilderConfig, overrides=override)
@@ -708,108 +713,128 @@ def add_concept(name, description, domain, article_ids, top_k, min_score, overri
     from concept_builder.containers import ConceptBuilderContainer
     container = ConceptBuilderContainer(config=cfg)
 
+    processor = container.processor()
     gs = container.graph_store()
-    vs = container.vector_store()
 
-    # Embed the description
-    from raptor_pipeline.embeddings.providers import create_embedding_provider
-    embedder = create_embedding_provider(cfg.embeddings)
-
+    # Embed the concept description
     click.echo(f"\n{'═' * 70}")
     click.echo(f"  Adding concept: {name} ({domain})")
     click.echo(f"{'═' * 70}")
     click.echo(f"  Description: {description}")
+    click.echo(f"  Thresholds: high={high_threshold}, low={low_threshold}")
 
-    desc_embedding = embedder.embed_texts([description])[0]
+    desc_embedding = processor._embedder.embed_texts([description])[0]
+    concept_vec = np.array(desc_embedding, dtype=np.float32)
 
-    # Search raptor_chunks for matching chunks
+    # ── Phase 1: Load keywords from articles ──
     articles = []
     if article_ids:
         articles = [a.strip() for a in article_ids.split(",") if a.strip()]
 
-    from qdrant_client.models import Filter, FieldCondition, MatchValue
-
-    matched_keywords: set[str] = set()
-    matched_chunks: list[dict] = []
+    all_keywords = []
+    min_conf = getattr(cfg, "min_keyword_confidence", 0.8)
 
     if articles:
-        click.echo(f"\n  Searching chunks in {len(articles)} articles...")
-        for art_id in articles:
-            try:
-                results = vs._client.query_points(
-                    collection_name=vs._collection,
-                    query=desc_embedding,
-                    limit=top_k,
-                    query_filter=Filter(must=[
-                        FieldCondition(key="article_id", match=MatchValue(value=art_id)),
-                    ]),
-                    with_payload=True,
-                )
-                for r in results.points:
-                    if r.score >= min_score:
-                        payload = r.payload or {}
-                        matched_chunks.append({
-                            "article_id": art_id,
-                            "node_id": payload.get("node_id", ""),
-                            "level": payload.get("level", 0),
-                            "score": r.score,
-                            "text": payload.get("text", "")[:200],
-                            "keywords": payload.get("keywords", []),
-                        })
-                        for kw in payload.get("keywords", []):
-                            matched_keywords.add(kw)
-            except Exception as exc:
-                click.echo(f"  ⚠️  Search in article {art_id} failed: {exc}")
+        click.echo(f"\n  Loading keywords from {len(articles)} articles...")
+        for aid in tqdm(articles, desc="Loading keywords", unit="article"):
+            kws = processor._load_article_keywords(aid)
+            filtered = [k for k in kws if k.confidence >= min_conf]
+            all_keywords.extend(filtered)
+            click.echo(f"    Article '{aid}': {len(filtered)} keywords (≥{min_conf})")
     else:
-        # Search without article filter
-        click.echo(f"\n  Searching all chunks (no article filter)...")
-        try:
-            results = vs._client.query_points(
-                collection_name=vs._collection,
-                query=desc_embedding,
-                limit=top_k,
-                with_payload=True,
+        click.echo("\n  ⚠️  No articles specified. Use -a to specify article IDs.")
+        gs.close()
+        return
+
+    if not all_keywords:
+        click.echo("  ⚠️  No keywords found in specified articles.")
+        gs.close()
+        return
+
+    # ── Phase 2: Generate descriptions + embeddings for keywords ──
+    need_desc = [kc for kc in all_keywords if not kc.description]
+    cached = len(all_keywords) - len(need_desc)
+    click.echo(f"\n  Keywords: {len(all_keywords)} total, {cached} cached, {len(need_desc)} need descriptions")
+
+    if need_desc and processor._describer:
+        click.echo(f"  Generating {len(need_desc)} descriptions...")
+        for kc in tqdm(need_desc, desc="Descriptions", unit="kw"):
+            kc.description = processor._describer.describe(
+                kc.word, kc.article_id, kc.chunk_ids,
             )
-            for r in results.points:
-                if r.score >= min_score:
-                    payload = r.payload or {}
-                    art_id = payload.get("article_id", "")
-                    if art_id:
-                        articles.append(art_id)
-                    matched_chunks.append({
-                        "article_id": art_id,
-                        "node_id": payload.get("node_id", ""),
-                        "level": payload.get("level", 0),
-                        "score": r.score,
-                        "text": payload.get("text", "")[:200],
-                        "keywords": payload.get("keywords", []),
-                    })
-                    for kw in payload.get("keywords", []):
-                        matched_keywords.add(kw)
-        except Exception as exc:
-            click.echo(f"  ⚠️  Search failed: {exc}")
-        articles = list(set(articles))
+            if not kc.description:
+                kc.description = f"{kc.word} ({kc.category})"
+        processor._save_keyword_descriptions(need_desc)
 
-    # Display matched chunks
-    click.echo(f"\n  📄 Matched chunks ({len(matched_chunks)} with score ≥ {min_score}):")
-    for mc in sorted(matched_chunks, key=lambda x: x["score"], reverse=True):
-        text = mc["text"].replace("\n", " ")
-        click.echo(f"    [{mc['score']:.3f}] level={mc['level']} art={mc['article_id']}")
-        click.echo(f"      {text}")
-        if mc["keywords"]:
-            click.echo(f"      keywords: {', '.join(mc['keywords'][:8])}")
+    click.echo(f"  Computing keyword embeddings...")
+    descriptions = [kc.description for kc in all_keywords]
+    embeddings = processor._embedder.embed_texts(descriptions)
+    for kc, emb in zip(all_keywords, embeddings):
+        kc.embedding = emb
 
-    click.echo(f"\n  🔑 Matched keywords ({len(matched_keywords)}): {', '.join(sorted(matched_keywords)[:20])}")
+    # ── Phase 3: Match keywords → concept by cosine similarity ──
+    click.echo(f"\n  Matching {len(all_keywords)} keywords against concept...")
 
-    # Create concept
+    direct_matches: list[tuple] = []  # (kc, similarity)
+    candidates: list[tuple] = []
+    unmatched: list[tuple] = []
+
+    for kc in all_keywords:
+        if kc.embedding is None:
+            continue
+        kw_vec = np.array(kc.embedding, dtype=np.float32)
+        sim = float(np.dot(concept_vec, kw_vec) / (
+            np.linalg.norm(concept_vec) * np.linalg.norm(kw_vec) + 1e-8
+        ))
+        if sim >= high_threshold:
+            direct_matches.append((kc, sim))
+        elif sim >= low_threshold:
+            candidates.append((kc, sim))
+        else:
+            unmatched.append((kc, sim))
+
+    # Sort by similarity
+    direct_matches.sort(key=lambda x: x[1], reverse=True)
+    candidates.sort(key=lambda x: x[1], reverse=True)
+
+    # ── Display results ──
+    click.echo(f"\n{'─' * 70}")
+    click.echo(f"  ✅ Direct matches ({len(direct_matches)}, cosine ≥ {high_threshold}):")
+    click.echo(f"{'─' * 70}")
+    for kc, sim in direct_matches:
+        click.echo(f"    [{sim:.3f}] {kc.word} ({kc.category}) art={kc.article_id}")
+        if kc.description:
+            desc = kc.description[:100].replace("\n", " ")
+            click.echo(f"      {desc}")
+
+    click.echo(f"\n{'─' * 70}")
+    click.echo(f"  🔍 Candidates ({len(candidates)}, {low_threshold} ≤ cosine < {high_threshold}):")
+    click.echo(f"{'─' * 70}")
+    for kc, sim in candidates[:20]:
+        click.echo(f"    [{sim:.3f}] {kc.word} ({kc.category}) art={kc.article_id}")
+
+    click.echo(f"\n  Unmatched: {len(unmatched)} keywords (cosine < {low_threshold})")
+
+    # Collect matched keywords
+    matched_keywords = sorted({kc.word for kc, _ in direct_matches})
+    matched_articles = sorted({kc.article_id for kc, _ in direct_matches})
+
+    if not matched_keywords:
+        click.echo("\n  ⚠️  No keywords matched above high threshold. Concept not created.")
+        click.echo("  Try lowering --high-threshold or check articles.")
+        gs.close()
+        return
+
+    # ── Phase 4: Create and store concept ──
     run_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S") + "_manual"
     concept = ConceptNode(
         canonical_name=name,
         domain=domain,
         description=description,
-        source_articles=articles,
-        keyword_words=sorted(matched_keywords),
+        source_articles=matched_articles if matched_articles else articles,
+        keyword_words=matched_keywords,
         run_id=run_id,
+        is_manual=True,
         embedding=desc_embedding,
     )
 
@@ -827,6 +852,7 @@ def add_concept(name, description, domain, article_ids, top_k, min_score, overri
                 concept.keyword_words = $keyword_words,
                 concept.version = 1,
                 concept.is_active = true,
+                concept.is_manual = true,
                 concept.run_id = $run_id,
                 concept.updated_at = $updated_at
             """,
@@ -842,7 +868,7 @@ def add_concept(name, description, domain, article_ids, top_k, min_score, overri
             updated_at=datetime.utcnow().isoformat(),
         )
 
-        # Create INSTANCE_OF edges from matching keywords
+        # Create INSTANCE_OF edges
         for kw in matched_keywords:
             session.run(
                 """
@@ -860,7 +886,7 @@ def add_concept(name, description, domain, article_ids, top_k, min_score, overri
     try:
         from qdrant_client.models import PointStruct
         concepts_collection = cfg.stores.qdrant.get("concepts_collection", "concepts")
-        vs._client.upsert(
+        processor._vs._client.upsert(
             collection_name=concepts_collection,
             points=[PointStruct(
                 id=hash(concept.id) % (2**63),
@@ -872,6 +898,7 @@ def add_concept(name, description, domain, article_ids, top_k, min_score, overri
                     "description": concept.description,
                     "source_articles": concept.source_articles,
                     "keyword_words": concept.keyword_words,
+                    "is_manual": True,
                 },
             )],
         )
@@ -879,13 +906,16 @@ def add_concept(name, description, domain, article_ids, top_k, min_score, overri
     except Exception as exc:
         click.echo(f"  ⚠️  Qdrant storage failed: {exc}")
 
-    click.echo(f"\n  Summary:")
+    click.echo(f"\n{'═' * 70}")
+    click.echo(f"  Summary:")
     click.echo(f"    Name: {concept.canonical_name}")
     click.echo(f"    Domain: {concept.domain}")
     click.echo(f"    ID: {concept.id}")
     click.echo(f"    Run: {concept.run_id}")
-    click.echo(f"    Keywords: {len(matched_keywords)}")
-    click.echo(f"    Articles: {', '.join(articles) if articles else '—'}")
+    click.echo(f"    is_manual: True")
+    click.echo(f"    Direct keywords ({len(matched_keywords)}): {', '.join(matched_keywords[:15])}")
+    click.echo(f"    Candidate keywords: {len(candidates)} (not included, review manually)")
+    click.echo(f"    Articles: {', '.join(concept.source_articles)}")
     click.echo()
 
     gs.close()

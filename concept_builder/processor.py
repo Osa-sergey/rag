@@ -624,6 +624,7 @@ class CrossArticleProcessor:
                         concept.is_active = $is_active,
                         concept.previous_version_id = $prev_id,
                         concept.run_id = $run_id,
+                        concept.is_manual = $is_manual,
                         concept.updated_at = $updated_at
                     """,
                     id=c.id,
@@ -638,6 +639,7 @@ class CrossArticleProcessor:
                     is_active=c.is_active,
                     prev_id=c.previous_version_id or "",
                     run_id=c.run_id or "",
+                    is_manual=c.is_manual,
                     created_at=c.created_at,
                     updated_at=datetime.utcnow().isoformat(),
                 )
