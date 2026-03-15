@@ -6,6 +6,8 @@ import logging
 from datetime import datetime
 from typing import Any
 
+from tqdm import tqdm
+
 from omegaconf import DictConfig
 
 from concept_builder.article_selector import ArticleSelector
@@ -157,7 +159,7 @@ class CrossArticleProcessor:
         processed_articles: list[str] = []
         skipped_articles: list[str] = []
 
-        for aid in article_ids:
+        for aid in tqdm(article_ids, desc="Loading keywords", unit="article"):
             kws = self._load_article_keywords(aid)
             if not kws:
                 logger.warning(
@@ -202,7 +204,7 @@ class CrossArticleProcessor:
             "  Descriptions: %d cached, %d need LLM generation",
             cached, len(need_description),
         )
-        for kc in need_description:
+        for kc in tqdm(need_description, desc="Generating descriptions", unit="kw"):
             if self._describer:
                 kc.description = self._describer.describe(
                     kc.word, kc.article_id, kc.chunk_ids,
@@ -235,7 +237,7 @@ class CrossArticleProcessor:
         # ── Step 5: Create Concept nodes ──────────────────────
         logger.info("  Creating %d Concept nodes...", len(clusters))
         concepts: list[ConceptNode] = []
-        for cluster in clusters:
+        for cluster in tqdm(clusters, desc="Creating concepts", unit="concept"):
             concept = self._create_concept_from_cluster(cluster)
             concepts.append(concept)
 

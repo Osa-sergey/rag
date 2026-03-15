@@ -36,6 +36,13 @@ dependencies = [
     "asyncpg>=0.29.0",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
+    # Document DB tutorial
+    "psycopg2-binary>=2.9.0",
+    "pymongo>=4.6.0",
+    # Redis tutorial
+    "redis>=5.0.0",
+    # Progress bars
+    "tqdm>=4.66.0",
 ]
 
 [build-system]
