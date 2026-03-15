@@ -12,11 +12,14 @@ class ChunkResult:
     article_id: str
     level: int
     text: str
-    score: float
+    score: float  # best score across all queries
     keywords: list[str] = field(default_factory=list)
-    # Dedup tracking
-    hit_count: int = 1  # how many query variants found this
-    found_by: list[str] = field(default_factory=list)  # which queries
+    # Per-query tracking: {query_text: score}
+    scores_by_query: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def hit_count(self) -> int:
+        return len(self.scores_by_query)
 
 
 @dataclass
@@ -31,8 +34,11 @@ class ConceptResult:
     keywords: list[str] = field(default_factory=list)
     articles: list[str] = field(default_factory=list)
     relations: list[dict] = field(default_factory=list)
-    hit_count: int = 1
-    found_by: list[str] = field(default_factory=list)
+    scores_by_query: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def hit_count(self) -> int:
+        return len(self.scores_by_query)
 
 
 @dataclass
@@ -46,8 +52,11 @@ class RelationResult:
     predicate: str = ""
     description: str = ""
     score: float = 0.0
-    hit_count: int = 1
-    found_by: list[str] = field(default_factory=list)
+    scores_by_query: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def hit_count(self) -> int:
+        return len(self.scores_by_query)
 
 
 @dataclass

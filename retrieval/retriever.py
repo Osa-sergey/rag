@@ -106,9 +106,7 @@ class MultiSourceRetriever:
                 payload = hit["payload"]
                 nid = payload.get("node_id", str(hit["id"]))
                 if nid in chunks_map:
-                    chunks_map[nid].hit_count += 1
-                    chunks_map[nid].found_by.append(q_text)
-                    # Keep best score
+                    chunks_map[nid].scores_by_query[q_text] = hit["score"]
                     if hit["score"] > chunks_map[nid].score:
                         chunks_map[nid].score = hit["score"]
                 else:
@@ -119,8 +117,7 @@ class MultiSourceRetriever:
                         text=payload.get("text", ""),
                         score=hit["score"],
                         keywords=payload.get("keywords", []),
-                        hit_count=1,
-                        found_by=[q_text],
+                        scores_by_query={q_text: hit["score"]},
                     )
 
         # ── Search Concepts ──
@@ -133,8 +130,7 @@ class MultiSourceRetriever:
                 payload = hit["payload"]
                 cid = payload.get("concept_id", str(hit["id"]))
                 if cid in concepts_map:
-                    concepts_map[cid].hit_count += 1
-                    concepts_map[cid].found_by.append(q_text)
+                    concepts_map[cid].scores_by_query[q_text] = hit["score"]
                     if hit["score"] > concepts_map[cid].score:
                         concepts_map[cid].score = hit["score"]
                 else:
@@ -146,8 +142,7 @@ class MultiSourceRetriever:
                         score=hit["score"],
                         keywords=payload.get("keyword_words", []),
                         articles=payload.get("source_articles", []),
-                        hit_count=1,
-                        found_by=[q_text],
+                        scores_by_query={q_text: hit["score"]},
                     )
 
         # ── Search Cross-Relations ──
@@ -160,8 +155,7 @@ class MultiSourceRetriever:
                 payload = hit["payload"]
                 rid = f"{payload.get('source_concept_id', '')}:{payload.get('target_concept_id', '')}:{payload.get('predicate', '')}"
                 if rid in relations_map:
-                    relations_map[rid].hit_count += 1
-                    relations_map[rid].found_by.append(q_text)
+                    relations_map[rid].scores_by_query[q_text] = hit["score"]
                     if hit["score"] > relations_map[rid].score:
                         relations_map[rid].score = hit["score"]
                 else:
@@ -171,8 +165,7 @@ class MultiSourceRetriever:
                         predicate=payload.get("predicate", ""),
                         description=payload.get("description", ""),
                         score=hit["score"],
-                        hit_count=1,
-                        found_by=[q_text],
+                        scores_by_query={q_text: hit["score"]},
                     )
 
         # ── Enrich concepts with Neo4j relations ──

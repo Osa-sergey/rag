@@ -28,6 +28,15 @@ def load_config(overrides: tuple[str, ...] = ()) -> dict:
     return cfg
 
 
+def _format_scores(scores_by_query: dict[str, float], q_labels: dict[str, str]) -> str:
+    """Format per-query scores as a compact string."""
+    parts = []
+    for q_text, score in scores_by_query.items():
+        label = q_labels.get(q_text, q_text[:30])
+        parts.append(f"{label}: {score:.3f}")
+    return " | ".join(parts)
+
+
 # ── Click CLI ─────────────────────────────────────────────────
 @click.group()
 @click.option("-v", "--verbose", is_flag=True, help="DEBUG logging")
@@ -87,11 +96,11 @@ def search(query, top_k, no_rephrase, level, override):
     if result.rephrased_queries:
         click.echo(f"\n  🔄 Rephrased queries:")
         for i, rq in enumerate(result.rephrased_queries, 1):
-            click.echo(f"    {i}. {rq}")
+            click.echo(f"    Q{i}: {rq}")
 
-    # All query labels for trace display
+    # Query labels
     all_queries = [result.query] + result.rephrased_queries
-    q_labels = {result.query: "Q₀ (original)"}
+    q_labels = {result.query: "Q₀"}
     for i, rq in enumerate(result.rephrased_queries, 1):
         q_labels[rq] = f"Q{i}"
 
@@ -104,29 +113,19 @@ def search(query, top_k, no_rephrase, level, override):
         click.echo("  (no results)")
     else:
         for c in result.chunks:
-            weighted = c.score * c.hit_count
             text_preview = c.text[:200].replace("\n", " ")
             if len(c.text) > 200:
                 text_preview += "..."
 
             click.echo(
-                f"\n  [{c.score:.3f}×{c.hit_count}={weighted:.3f}] "
+                f"\n  [{c.score:.3f}] hits={c.hit_count} "
                 f"level={c.level} article={c.article_id}"
             )
             click.echo(f"    node: {c.node_id}")
             if c.keywords:
                 click.echo(f"    keywords: {', '.join(c.keywords[:10])}")
             click.echo(f"    text: {text_preview}")
-
-            # Trace: which queries found this
-            unique_sources = []
-            seen = set()
-            for fb in c.found_by:
-                label = q_labels.get(fb, fb[:40])
-                if label not in seen:
-                    seen.add(label)
-                    unique_sources.append(label)
-            click.echo(f"    found by: {', '.join(unique_sources)}")
+            click.echo(f"    scores: {_format_scores(c.scores_by_query, q_labels)}")
 
     # ── Concepts ──
     click.echo(f"\n{'─' * 70}")
@@ -137,9 +136,8 @@ def search(query, top_k, no_rephrase, level, override):
         click.echo("  (no results)")
     else:
         for c in result.concepts:
-            weighted = c.score * c.hit_count
             click.echo(
-                f"\n  [{c.score:.3f}×{c.hit_count}={weighted:.3f}] "
+                f"\n  [{c.score:.3f}] hits={c.hit_count} "
                 f"{c.name} ({c.domain})"
             )
             desc_preview = c.description[:150].replace("\n", " ")
@@ -151,7 +149,6 @@ def search(query, top_k, no_rephrase, level, override):
             if c.articles:
                 click.echo(f"    articles: {', '.join(c.articles)}")
 
-            # Relations
             if c.relations:
                 click.echo(f"    relations ({len(c.relations)}):")
                 for rel in c.relations[:5]:
@@ -161,15 +158,7 @@ def search(query, top_k, no_rephrase, level, override):
                 if len(c.relations) > 5:
                     click.echo(f"      ... +{len(c.relations) - 5} more")
 
-            # Trace
-            unique_sources = []
-            seen = set()
-            for fb in c.found_by:
-                label = q_labels.get(fb, fb[:40])
-                if label not in seen:
-                    seen.add(label)
-                    unique_sources.append(label)
-            click.echo(f"    found by: {', '.join(unique_sources)}")
+            click.echo(f"    scores: {_format_scores(c.scores_by_query, q_labels)}")
 
     # ── Cross-Relations ──
     click.echo(f"\n{'─' * 70}")
@@ -180,11 +169,10 @@ def search(query, top_k, no_rephrase, level, override):
         click.echo("  (no results)")
     else:
         for r in result.relations:
-            weighted = r.score * r.hit_count
             src = r.source_name or r.source_concept_id[:8]
             tgt = r.target_name or r.target_concept_id[:8]
             click.echo(
-                f"\n  [{r.score:.3f}×{r.hit_count}={weighted:.3f}] "
+                f"\n  [{r.score:.3f}] hits={r.hit_count} "
                 f"{src} → {tgt}"
             )
             click.echo(f"    predicate: {r.predicate}")
@@ -193,15 +181,7 @@ def search(query, top_k, no_rephrase, level, override):
                 if len(r.description) > 200:
                     desc += "..."
                 click.echo(f"    desc: {desc}")
-
-            unique_sources = []
-            seen = set()
-            for fb in r.found_by:
-                label = q_labels.get(fb, fb[:40])
-                if label not in seen:
-                    seen.add(label)
-                    unique_sources.append(label)
-            click.echo(f"    found by: {', '.join(unique_sources)}")
+            click.echo(f"    scores: {_format_scores(r.scores_by_query, q_labels)}")
 
     # ── Summary ──
     click.echo(f"\n{'═' * 70}")
@@ -213,12 +193,11 @@ def search(query, top_k, no_rephrase, level, override):
         f"from {len(all_queries)} query variants"
     )
 
-    # Show how many results came from each query
     for q in all_queries:
         label = q_labels.get(q, q[:40])
-        chunk_hits = sum(1 for c in result.chunks if q in c.found_by)
-        concept_hits = sum(1 for c in result.concepts if q in c.found_by)
-        rel_hits = sum(1 for r in result.relations if q in r.found_by)
+        chunk_hits = sum(1 for c in result.chunks if q in c.scores_by_query)
+        concept_hits = sum(1 for c in result.concepts if q in c.scores_by_query)
+        rel_hits = sum(1 for r in result.relations if q in r.scores_by_query)
         click.echo(f"    {label}: {chunk_hits} chunks, {concept_hits} concepts, {rel_hits} relations")
 
     click.echo()
