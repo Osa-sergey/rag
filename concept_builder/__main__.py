@@ -211,17 +211,18 @@ def process(base_article, strategy, max_articles, article_ids, no_check_connecti
 
 @cli.command("list-concepts")
 @click.option("--domain", "-d", default=None, help="Фильтр по домену")
-@click.option("--article-id", "-a", default=None, help="Фильтр по article_id (concepts содержащие статью)")
-@click.option("--show-relations", "-r", is_flag=True, help="Показать связанные концепты")
+@click.option("--article-id", "-a", default=None, help="Фильтр по article_id")
+@click.option("--show-relations", "-r", is_flag=True, help="Только concepts со связями + показать связи")
+@click.option("--full", "-f", is_flag=True, help="Полный текст описаний (без обрезки)")
 @click.option("--override", "-o", multiple=True, help="Hydra override")
-def list_concepts(domain, article_id, show_relations, override):
+def list_concepts(domain, article_id, show_relations, full, override):
     """Показать все Concept-ноды с их ID.
 
     \\b
     Примеры:
       python -m concept_builder list-concepts
-      python -m concept_builder list-concepts --domain devops
-      python -m concept_builder list-concepts --article-id 986380
+      python -m concept_builder list-concepts -d devops -r -f
+      python -m concept_builder list-concepts -a 986380 --full
     """
     cfg = load_config(CONFIG_DIR, CONFIG_NAME, ConceptBuilderConfig, overrides=override)
 
@@ -312,12 +313,14 @@ def list_concepts(domain, article_id, show_relations, override):
                         if pred:
                             line += f" ({pred})"
                         if rdesc:
-                            short = rdesc[:80] + "..." if len(rdesc) > 80 else rdesc
-                            line += f": {short}"
+                            if not full:
+                                rdesc = rdesc[:80] + "..." if len(rdesc) > 80 else rdesc
+                            line += f": {rdesc}"
                         click.echo(line)
         if desc:
-            short_desc = desc[:120] + "..." if len(desc) > 120 else desc
-            click.echo(f"     description: {short_desc}")
+            if not full:
+                desc = desc[:120] + "..." if len(desc) > 120 else desc
+            click.echo(f"     description: {desc}")
         click.echo()
 
     click.echo(f"{'═' * 70}")
