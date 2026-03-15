@@ -444,6 +444,7 @@ class CrossArticleProcessor:
                 session.run(
                     """
                     MERGE (concept:Concept {id: $id})
+                    ON CREATE SET concept.created_at = $created_at
                     SET concept.canonical_name = $name,
                         concept.concept_group_id = $group_id,
                         concept.domain = $domain,
@@ -455,7 +456,6 @@ class CrossArticleProcessor:
                         concept.is_active = $is_active,
                         concept.previous_version_id = $prev_id,
                         concept.updated_at = $updated_at
-                    ON CREATE SET concept.created_at = $created_at
                     """,
                     id=c.id,
                     group_id=c.concept_group_id,
