@@ -190,6 +190,16 @@ class TokenTracker:
         if total.total_tokens == 0 and total.call_count == 0:
             return
 
+        if total.total_tokens == 0 and total.call_count > 0:
+            logger.warning(
+                "  ⚠️  Token usage for '%s': %d LLM calls were made, "
+                "but no token counts were returned in response metadata. "
+                "The LLM server may not support token usage reporting.",
+                article_id,
+                total.call_count,
+            )
+            return
+
         logger.info(
             "  📊 Token usage for '%s': %d total "
             "(prompt=%d, completion=%d, cached=%d) in %d calls",

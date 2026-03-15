@@ -24,7 +24,7 @@ class LLMRelationExtractor(BaseRelationExtractor):
     def __init__(self, cfg: DictConfig, prompt_cfg: DictConfig, *, tracker=None) -> None:
         self._llm = _build_llm(cfg)
         self._tracker = tracker
-        self._structured_llm = self._llm.with_structured_output(RelationListSO)
+        self._structured_llm = self._llm.with_structured_output(RelationListSO, include_raw=True)
         
         self._max_relations: int = cfg.get("max_relations", 20)
         self._confidence_threshold: float = cfg.get("confidence_threshold", 0.5)
@@ -69,9 +69,14 @@ class LLMRelationExtractor(BaseRelationExtractor):
         
         try:
             # 1. Try primary structured output
-            result: RelationListSO = self._structured_llm.invoke(prompt)
-            if self._tracker and hasattr(result, 'response_metadata'):
-                self._tracker.track(result, "relation_extractor")
+            so_result = self._structured_llm.invoke(prompt)
+            # include_raw=True returns {'raw': AIMessage, 'parsed': Pydantic, 'parsing_error': ...}
+            raw_msg = so_result.get("raw") if isinstance(so_result, dict) else None
+            result: RelationListSO | None = (
+                so_result.get("parsed") if isinstance(so_result, dict) else so_result
+            )
+            if self._tracker and raw_msg is not None:
+                self._tracker.track(raw_msg, "relation_extractor")
             if result and result.relations:
                 return self._parse_so_result(result, chunk_id)
             
