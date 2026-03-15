@@ -197,10 +197,110 @@ def process(base_article, strategy, max_articles, article_ids, no_check_connecti
 
     for c in result.get("concepts", []):
         click.echo(f"\n  💡 {c['name']} (domain: {c.get('domain', '?')})")
+        click.echo(f"     id: {c['id']}")
         click.echo(f"     keywords: {', '.join(c['keywords'])}")
         click.echo(f"     articles: {', '.join(c['articles'])}")
 
     click.echo()
+    container.graph_store().close()
+
+
+# ══════════════════════════════════════════════════════════════
+# list-concepts
+# ══════════════════════════════════════════════════════════════
+
+@cli.command("list-concepts")
+@click.option("--domain", "-d", default=None, help="Фильтр по домену")
+@click.option("--article-id", "-a", default=None, help="Фильтр по article_id (concepts содержащие статью)")
+@click.option("--override", "-o", multiple=True, help="Hydra override")
+def list_concepts(domain, article_id, override):
+    """Показать все Concept-ноды с их ID.
+
+    \\b
+    Примеры:
+      python -m concept_builder list-concepts
+      python -m concept_builder list-concepts --domain devops
+      python -m concept_builder list-concepts --article-id 986380
+    """
+    cfg = load_config(CONFIG_DIR, CONFIG_NAME, ConceptBuilderConfig, overrides=override)
+
+    from concept_builder.containers import ConceptBuilderContainer
+    container = ConceptBuilderContainer(config=cfg)
+
+    from neo4j import GraphDatabase
+    n_cfg = cfg.stores.neo4j
+    driver = GraphDatabase.driver(n_cfg.uri, auth=(n_cfg.user, n_cfg.password))
+
+    with driver.session(database=n_cfg.database) as session:
+        # Build query with optional filters
+        where_parts = []
+        params = {}
+        if domain:
+            where_parts.append("c.domain = $domain")
+            params["domain"] = domain
+        if article_id:
+            where_parts.append("$article_id IN c.source_articles")
+            params["article_id"] = article_id
+
+        where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+
+        result = session.run(
+            f"""
+            MATCH (c:Concept)
+            {where_clause}
+            OPTIONAL MATCH (c)-[r:CROSS_RELATED_TO]-()
+            RETURN c.id AS id, c.canonical_name AS name, c.domain AS domain,
+                   c.description AS description,
+                   c.source_articles AS source_articles,
+                   c.keyword_words AS keyword_words,
+                   count(DISTINCT r) AS relations_count
+            ORDER BY c.domain, c.canonical_name
+            """,
+            **params,
+        ).data()
+
+    driver.close()
+
+    if not result:
+        click.echo("Нет Concept-нод в Neo4j.")
+        if domain:
+            click.echo(f"  (фильтр domain='{domain}')")
+        if article_id:
+            click.echo(f"  (фильтр article_id='{article_id}')")
+        return
+
+    click.echo(f"\n{'═' * 70}")
+    click.echo(f"  Concepts ({len(result)})")
+    click.echo(f"{'═' * 70}\n")
+
+    for c in result:
+        name = c.get("name", "?")
+        domain_val = c.get("domain", "?")
+        cid = c.get("id", "?")
+        keywords = c.get("keyword_words") or []
+        articles = c.get("source_articles") or []
+        rels = c.get("relations_count", 0)
+        desc = c.get("description", "")
+
+        click.echo(f"  💡 {name} ({domain_val})")
+        click.echo(f"     id: {cid}")
+        click.echo(f"     keywords: {', '.join(keywords) if keywords else '—'}")
+        click.echo(f"     articles: {', '.join(articles) if articles else '—'}")
+        if rels:
+            click.echo(f"     cross-relations: {rels}")
+        if desc:
+            short_desc = desc[:100] + "..." if len(desc) > 100 else desc
+            click.echo(f"     description: {short_desc}")
+        click.echo()
+
+    click.echo(f"{'═' * 70}")
+    click.echo(f"  Всего: {len(result)} concepts")
+
+    # Show unique domains
+    domains = sorted({c.get("domain", "?") for c in result})
+    click.echo(f"  Домены: {', '.join(domains)}")
+    click.echo()
+
     container.graph_store().close()
 
 
