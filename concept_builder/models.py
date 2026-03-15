@@ -109,5 +109,6 @@ class DryRunReport:
     raw_keywords_per_article: dict[str, int] = field(default_factory=dict)
     confidence_distributions: dict[str, dict] = field(default_factory=dict)
     sample_confidences: dict[str, list] = field(default_factory=dict)
+    unprocessed_articles: list[str] = field(default_factory=list)
     references: list[tuple[str, str]] = field(default_factory=list)
     estimated_llm_calls: int = 0

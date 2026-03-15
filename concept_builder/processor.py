@@ -75,7 +75,24 @@ class CrossArticleProcessor:
         report = DryRunReport(articles=article_ids)
 
         for aid in article_ids:
+            # Get article name
+            with self._gs._driver.session(database=self._gs._database) as session:
+                result = session.run(
+                    "MATCH (a:Article {id: $id}) RETURN a.article_name AS name",
+                    id=aid,
+                ).single()
+                report.article_names[aid] = result["name"] if result else aid
+
             kws = self._load_article_keywords(aid)
+
+            # Detect unprocessed (placeholder) articles:
+            # exist as nodes but have no keywords (never run through raptor_pipeline)
+            if not kws:
+                report.unprocessed_articles.append(aid)
+                report.keywords_per_article[aid] = 0
+                report.raw_keywords_per_article[aid] = 0
+                continue
+
             filtered = [k for k in kws if k.confidence >= self._min_confidence]
             report.keywords_per_article[aid] = len(filtered)
             report.raw_keywords_per_article[aid] = len(kws)
@@ -94,14 +111,6 @@ class CrossArticleProcessor:
             report.sample_confidences[aid] = sorted(
                 [k.confidence for k in kws], reverse=True,
             )[:10]
-
-            # Get article name
-            with self._gs._driver.session(database=self._gs._database) as session:
-                result = session.run(
-                    "MATCH (a:Article {id: $id}) RETURN a.article_name AS name",
-                    id=aid,
-                ).single()
-                report.article_names[aid] = result["name"] if result else aid
 
         # Get references between selected articles
         id_set = set(article_ids)
@@ -138,20 +147,46 @@ class CrossArticleProcessor:
         logger.info("Cross-Article Processor: %d articles", len(article_ids))
         logger.info("═" * 60)
 
-        # ── Step 1: Load keywords ─────────────────────────────
+        # ── Step 1: Load keywords, skip unprocessed articles ──
         all_contexts: list[KeywordContext] = []
+        processed_articles: list[str] = []
+        skipped_articles: list[str] = []
+
         for aid in article_ids:
             kws = self._load_article_keywords(aid)
+            if not kws:
+                logger.warning(
+                    "  ⚠️  Article '%s' — необработана (нет keywords), пропускаем",
+                    aid,
+                )
+                skipped_articles.append(aid)
+                continue
+
             filtered = [k for k in kws if k.confidence >= self._min_confidence]
+            if not filtered:
+                logger.warning(
+                    "  ⚠️  Article '%s' — 0 keywords ≥ %.1f (total: %d), пропускаем",
+                    aid, self._min_confidence, len(kws),
+                )
+                skipped_articles.append(aid)
+                continue
+
             all_contexts.extend(filtered)
+            processed_articles.append(aid)
             logger.info(
                 "  Article '%s': %d keywords (≥%.1f confidence)",
                 aid, len(filtered), self._min_confidence,
             )
 
+        if skipped_articles:
+            logger.warning(
+                "  Пропущено %d статей (необработаны или нет keywords): %s",
+                len(skipped_articles), skipped_articles,
+            )
+
         if not all_contexts:
             logger.warning("No keywords found above confidence threshold")
-            return {"concepts": 0, "relations": 0}
+            return {"concepts": 0, "relations": 0, "skipped_articles": skipped_articles}
 
         logger.info("  Total keywords for processing: %d", len(all_contexts))
 

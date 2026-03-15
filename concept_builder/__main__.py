@@ -99,6 +99,11 @@ def dry_run(base_article, strategy, max_articles, article_ids, no_check_connecti
         name = report.article_names.get(aid, aid)
         kw_count = report.keywords_per_article.get(aid, 0)
         total_kw = report.raw_keywords_per_article.get(aid, 0)
+
+        if aid in report.unprocessed_articles:
+            click.echo(f"  ⚠️  {aid} ({name}) — НЕ ОБРАБОТАНА (нет keywords)")
+            continue
+
         click.echo(
             f"  📄 {aid} ({name}) — {kw_count}/{total_kw} keywords "
             f"(≥{cfg.min_keyword_confidence} / total)"
@@ -116,6 +121,13 @@ def dry_run(base_article, strategy, max_articles, article_ids, no_check_connecti
         sample_confs = report.sample_confidences.get(aid, [])
         if kw_count == 0 and sample_confs:
             click.echo(f"     ⚠️  sample confidence values: {sample_confs[:10]}")
+
+    if report.unprocessed_articles:
+        click.echo(
+            f"\n  ⚠️  {len(report.unprocessed_articles)} из {len(report.articles)} "
+            f"статей не обработаны (нет keywords). "
+            f"Сначала запустите raptor_pipeline для них."
+        )
 
     click.echo(f"\n  Связи между статьями ({len(report.references)}):")
     if report.references:
