@@ -273,6 +273,12 @@ def list_concepts(domain, article_id, show_relations, override):
             click.echo(f"  (фильтр article_id='{article_id}')")
         return
 
+    if show_relations:
+        result = [c for c in result if c.get("relations_count", 0) > 0]
+        if not result:
+            click.echo("Нет Concepts со связями.")
+            return
+
     click.echo(f"\n{'═' * 70}")
     click.echo(f"  Concepts ({len(result)})")
     click.echo(f"{'═' * 70}\n")
