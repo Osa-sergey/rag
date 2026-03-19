@@ -4,7 +4,7 @@ Flow:
   Click CLI → Hydra compose → pydantic validate → DI container → pipeline
 
 Features:
-  - Config-driven class replacement via _class_ field (embeddings, stores)
+  - Config-driven class replacement via _class_ field (all components)
   - Base class validation (issubclass check)
   - Wiring: @inject + Provide[] on Click commands
   - Singleton stores, Resource (lazy) embedder
@@ -12,87 +12,66 @@ Features:
 from __future__ import annotations
 
 from dependency_injector import containers, providers
-from omegaconf import OmegaConf, DictConfig
-from pydantic import BaseModel
 
 from cli_base.class_resolver import resolve_class
+from cli_base.config_utils import to_dictconfig
 from raptor_pipeline.schemas import RaptorPipelineConfig
-
-
-def _to_dictconfig(obj) -> DictConfig:
-    """Convert a Pydantic model (or sub-config) to OmegaConf DictConfig.
-
-    Components (providers, summarizer, tree_builder, etc.) use
-    ``cfg.get(key, default)`` which is an OmegaConf API.  When configs
-    come from the Click+Hydra+Pydantic pipeline they are Pydantic models,
-    so we must convert at the DI boundary.
-    """
-    if isinstance(obj, DictConfig):
-        return obj
-    if isinstance(obj, BaseModel):
-        return OmegaConf.create(obj.model_dump(by_alias=True))
-    if isinstance(obj, dict):
-        return OmegaConf.create(obj)
-    return obj
 
 
 def _create_embedding_provider(cfg: RaptorPipelineConfig):
     """Resolve embedding provider class from config and instantiate."""
     from interfaces import BaseEmbeddingProvider
     cls = resolve_class(cfg.embeddings.class_, BaseEmbeddingProvider)
-    return cls(_to_dictconfig(cfg.embeddings))
+    return cls(to_dictconfig(cfg.embeddings))
 
 
 def _create_graph_store(cfg: RaptorPipelineConfig):
     """Resolve graph store class from config and instantiate."""
     from interfaces import BaseGraphStore
     cls = resolve_class(cfg.stores.neo4j.class_, BaseGraphStore)
-    return cls(_to_dictconfig(cfg.stores.neo4j))
+    return cls(to_dictconfig(cfg.stores.neo4j))
 
 
 def _create_vector_store(cfg: RaptorPipelineConfig):
-    """Create Qdrant vector store from config."""
-    from stores.vector_store import QdrantVectorStore
-    return QdrantVectorStore(_to_dictconfig(cfg.stores.qdrant))
+    """Resolve vector store class from config and instantiate."""
+    from interfaces import BaseVectorStore
+    cls = resolve_class(cfg.stores.qdrant.class_, BaseVectorStore)
+    return cls(to_dictconfig(cfg.stores.qdrant))
 
 
 def _create_chunker(cfg: RaptorPipelineConfig, embedder):
-    """Create chunker based on 'type' field."""
-    chunker_type = cfg.chunker.type
-    chunker_cfg = _to_dictconfig(cfg.chunker)
-    if chunker_type == "semantic":
-        from raptor_pipeline.chunker.semantic_chunker import SemanticChunker
-        return SemanticChunker(chunker_cfg, embedder)
-    elif chunker_type == "hybrid":
-        from raptor_pipeline.chunker.hybrid_chunker import HybridChunker
-        return HybridChunker(chunker_cfg, embedder)
-    else:
-        from raptor_pipeline.chunker.section_chunker import SectionChunker
-        return SectionChunker(chunker_cfg)
+    """Resolve chunker class from _class_ and instantiate."""
+    from interfaces import BaseChunker
+    cls = resolve_class(cfg.chunker.class_, BaseChunker)
+    return cls(to_dictconfig(cfg.chunker), embedding_provider=embedder)
 
 
 def _create_summarizer(cfg: RaptorPipelineConfig):
-    """Create LLM summarizer."""
-    from raptor_pipeline.summarizer.llm_summarizer import LLMSummarizer
-    return LLMSummarizer(_to_dictconfig(cfg.summarizer), _to_dictconfig(cfg.prompts.summarize))
+    """Resolve summarizer class from config and instantiate."""
+    from interfaces import BaseSummarizer
+    cls = resolve_class(cfg.summarizer.class_, BaseSummarizer)
+    return cls(to_dictconfig(cfg.summarizer), to_dictconfig(cfg.prompts.summarize))
 
 
 def _create_kw_extractor(cfg: RaptorPipelineConfig):
-    """Create keyword extractor."""
-    from raptor_pipeline.knowledge_graph.keyword_extractor import LLMKeywordExtractor
-    return LLMKeywordExtractor(_to_dictconfig(cfg.knowledge_graph), _to_dictconfig(cfg.prompts.keywords))
+    """Resolve keyword extractor class from config and instantiate."""
+    from interfaces import BaseKeywordExtractor
+    cls = resolve_class(cfg.knowledge_graph.kw_extractor_class, BaseKeywordExtractor)
+    return cls(to_dictconfig(cfg.knowledge_graph), to_dictconfig(cfg.prompts.keywords))
 
 
 def _create_kw_refiner(cfg: RaptorPipelineConfig):
-    """Create keyword refiner."""
-    from raptor_pipeline.knowledge_graph.keyword_refiner import LLMKeywordRefiner
-    return LLMKeywordRefiner(_to_dictconfig(cfg.knowledge_graph), _to_dictconfig(cfg.prompts.refine_keywords))
+    """Resolve keyword refiner class from config and instantiate."""
+    from interfaces import BaseKeywordRefiner
+    cls = resolve_class(cfg.knowledge_graph.kw_refiner_class, BaseKeywordRefiner)
+    return cls(to_dictconfig(cfg.knowledge_graph), to_dictconfig(cfg.prompts.refine_keywords))
 
 
 def _create_rel_extractor(cfg: RaptorPipelineConfig):
-    """Create relation extractor."""
-    from raptor_pipeline.knowledge_graph.relation_extractor import LLMRelationExtractor
-    return LLMRelationExtractor(_to_dictconfig(cfg.knowledge_graph), _to_dictconfig(cfg.prompts.relations))
+    """Resolve relation extractor class from config and instantiate."""
+    from interfaces import BaseRelationExtractor
+    cls = resolve_class(cfg.knowledge_graph.rel_extractor_class, BaseRelationExtractor)
+    return cls(to_dictconfig(cfg.knowledge_graph), to_dictconfig(cfg.prompts.relations))
 
 
 def _create_pipeline(cfg, embedder, chunker, summarizer,
@@ -101,7 +80,7 @@ def _create_pipeline(cfg, embedder, chunker, summarizer,
     """Assemble the full pipeline with all injected dependencies."""
     from raptor_pipeline.pipeline import RaptorPipeline
     return RaptorPipeline(
-        _to_dictconfig(cfg),
+        to_dictconfig(cfg),
         embedder=embedder,
         chunker=chunker,
         summarizer=summarizer,
@@ -117,7 +96,7 @@ class RaptorPipelineContainer(containers.DeclarativeContainer):
     """DI-контейнер для RAPTOR Pipeline.
 
     Принимает провалидированный RaptorPipelineConfig (pydantic).
-    Классы embedding_provider и graph_store резолвятся из _class_ в конфиге.
+    Все компоненты резолвятся из _class_ в конфиге через resolve_class.
 
     Usage::
 

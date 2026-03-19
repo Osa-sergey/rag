@@ -31,6 +31,7 @@ class HybridChunker(BaseChunker):
     def __init__(
         self,
         cfg: DictConfig,
+        *,
         embedding_provider: BaseEmbeddingProvider,
     ) -> None:
         self.max_chunk_chars: int = cfg.get("max_chunk_chars", 2000)

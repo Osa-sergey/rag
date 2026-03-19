@@ -30,6 +30,7 @@ class SemanticChunker(BaseChunker):
     def __init__(
         self,
         cfg: DictConfig,
+        *,
         embedding_provider: BaseEmbeddingProvider,
     ) -> None:
         self.similarity_threshold: float = cfg.get("similarity_threshold", 0.5)

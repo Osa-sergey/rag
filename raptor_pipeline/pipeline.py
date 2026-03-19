@@ -7,19 +7,11 @@ from typing import Any
 
 from omegaconf import DictConfig
 
+from cli_base.class_resolver import resolve_class
+from cli_base.config_utils import to_dictconfig
 from document_parser.text_extractor import load_yaml
 from raptor_pipeline.chunker.base import Chunk
-from raptor_pipeline.chunker.hybrid_chunker import HybridChunker
-from raptor_pipeline.chunker.section_chunker import SectionChunker
-from raptor_pipeline.chunker.semantic_chunker import SemanticChunker
-from raptor_pipeline.embeddings.providers import create_embedding_provider
-from raptor_pipeline.knowledge_graph.keyword_extractor import LLMKeywordExtractor
-from raptor_pipeline.knowledge_graph.keyword_refiner import LLMKeywordRefiner
-from raptor_pipeline.knowledge_graph.relation_extractor import LLMRelationExtractor
 from raptor_pipeline.raptor.tree_builder import RaptorNode, RaptorTreeBuilder
-from stores.graph_store import Neo4jGraphStore
-from stores.vector_store import QdrantVectorStore
-from raptor_pipeline.summarizer.llm_summarizer import LLMSummarizer
 from raptor_pipeline.knowledge_graph.link_parser import (
     extract_links_from_text,
     parse_article_version,
@@ -65,25 +57,25 @@ class RaptorPipeline:
         if embedder is not None:
             self._embedder = embedder
         else:
-            self._embedder = create_embedding_provider(cfg.embeddings)
+            from interfaces import BaseEmbeddingProvider
+            emb_cls = resolve_class(cfg.embeddings.get("_class_"), BaseEmbeddingProvider)
+            self._embedder = emb_cls(cfg.embeddings)
 
         # Chunker
         if chunker is not None:
             self._chunker = chunker
         else:
-            chunker_type = cfg.chunker.get("type", "section")
-            if chunker_type == "semantic":
-                self._chunker = SemanticChunker(cfg.chunker, self._embedder)
-            elif chunker_type == "hybrid":
-                self._chunker = HybridChunker(cfg.chunker, self._embedder)
-            else:
-                self._chunker = SectionChunker(cfg.chunker)
+            from interfaces import BaseChunker
+            chunker_cls = resolve_class(cfg.chunker.get("_class_"), BaseChunker)
+            self._chunker = chunker_cls(cfg.chunker, embedding_provider=self._embedder)
 
         # Summariser
         if summarizer is not None:
             self._summarizer = summarizer
         else:
-            self._summarizer = LLMSummarizer(
+            from interfaces import BaseSummarizer
+            sum_cls = resolve_class(cfg.summarizer.get("_class_"), BaseSummarizer)
+            self._summarizer = sum_cls(
                 cfg.summarizer, cfg.prompts.summarize,
                 tracker=self._token_tracker,
             )
@@ -97,21 +89,27 @@ class RaptorPipeline:
         if kw_extractor is not None:
             self._kw_extractor = kw_extractor
         else:
-            self._kw_extractor = LLMKeywordExtractor(
+            from interfaces import BaseKeywordExtractor
+            kw_cls = resolve_class(cfg.knowledge_graph.get("kw_extractor_class"), BaseKeywordExtractor)
+            self._kw_extractor = kw_cls(
                 cfg.knowledge_graph, cfg.prompts.keywords,
                 tracker=self._token_tracker,
             )
         if kw_refiner is not None:
             self._kw_refiner = kw_refiner
         else:
-            self._kw_refiner = LLMKeywordRefiner(
+            from interfaces import BaseKeywordRefiner
+            ref_cls = resolve_class(cfg.knowledge_graph.get("kw_refiner_class"), BaseKeywordRefiner)
+            self._kw_refiner = ref_cls(
                 cfg.knowledge_graph, cfg.prompts.refine_keywords,
                 tracker=self._token_tracker,
             )
         if rel_extractor is not None:
             self._rel_extractor = rel_extractor
         else:
-            self._rel_extractor = LLMRelationExtractor(
+            from interfaces import BaseRelationExtractor
+            rel_cls = resolve_class(cfg.knowledge_graph.get("rel_extractor_class"), BaseRelationExtractor)
+            self._rel_extractor = rel_cls(
                 cfg.knowledge_graph, cfg.prompts.relations,
                 tracker=self._token_tracker,
             )
@@ -120,11 +118,16 @@ class RaptorPipeline:
         if vector_store is not None:
             self._vector_store = vector_store
         else:
-            self._vector_store = QdrantVectorStore(cfg.stores.qdrant)
+            from interfaces import BaseVectorStore
+            vs_cls = resolve_class(cfg.stores.qdrant.get("_class_"), BaseVectorStore)
+            self._vector_store = vs_cls(cfg.stores.qdrant)
         if graph_store is not None:
             self._graph_store = graph_store
         else:
-            self._graph_store = Neo4jGraphStore(cfg.stores.neo4j)
+            from interfaces import BaseGraphStore
+            gs_cls = resolve_class(cfg.stores.neo4j.get("_class_"), BaseGraphStore)
+            self._graph_store = gs_cls(cfg.stores.neo4j)
+
 
         # Parallelism & batching
         self._max_workers: int = cfg.get("max_concurrency", 8)

@@ -75,8 +75,13 @@ def search(query, top_k, no_rephrase, level, override):
     from raptor_pipeline.embeddings.providers import create_embedding_provider
     embedder = create_embedding_provider(cfg.embeddings)
 
-    from stores.graph_store import Neo4jGraphStore
-    gs = Neo4jGraphStore(cfg.stores.neo4j)
+    from cli_base.class_resolver import resolve_class
+    from interfaces import BaseGraphStore
+    gs_cls = resolve_class(
+        cfg.stores.neo4j.get("_class_", "stores.graph_store.Neo4jGraphStore"),
+        BaseGraphStore,
+    )
+    gs = gs_cls(cfg.stores.neo4j)
 
     from retrieval.retriever import MultiSourceRetriever
     retriever = MultiSourceRetriever(

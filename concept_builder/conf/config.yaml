@@ -19,7 +19,7 @@ clustering:
   # Доступные:
   #   concept_builder.concept_clusterer.GreedyConceptClusterer   — greedy cosine (по умолчанию)
   #   concept_builder.concept_clusterer.HdbscanConceptClusterer  — HDBSCAN density-based
-  class_: concept_builder.concept_clusterer.GreedyConceptClusterer
+  _class_: concept_builder.concept_clusterer.GreedyConceptClusterer
   # Параметры HDBSCAN (игнорируются для Greedy):
   min_cluster_size: 2
   min_samples: 1
@@ -37,7 +37,7 @@ llm:
 
 # ── Embeddings ────────────────────────────────────────────────
 embeddings:
-  class_: raptor_pipeline.embeddings.providers.HuggingFaceEmbeddingProvider
+  _class_: raptor_pipeline.embeddings.providers.HuggingFaceEmbeddingProvider
   provider: huggingface
   model_name: sergeyzh/BERTA
   embedding_dim: 768
@@ -117,7 +117,7 @@ stores:
     vector_size: 768
 
   neo4j:
-    class_: stores.graph_store.Neo4jGraphStore
+    _class_: stores.graph_store.Neo4jGraphStore
     uri: bolt://localhost:7687
     user: neo4j
     password: raptor_password

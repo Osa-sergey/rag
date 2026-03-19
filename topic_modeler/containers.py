@@ -15,6 +15,7 @@ from __future__ import annotations
 from dependency_injector import containers, providers
 
 from cli_base.class_resolver import resolve_class
+from cli_base.config_utils import to_dictconfig
 from topic_modeler.schemas import TopicModelerConfig
 
 
@@ -23,7 +24,7 @@ def _create_graph_store(cfg: TopicModelerConfig):
     from interfaces import BaseGraphStore
     gs_cfg = cfg.stores.graph_store
     cls = resolve_class(gs_cfg.class_, BaseGraphStore)
-    return cls(gs_cfg)
+    return cls(to_dictconfig(gs_cfg))
 
 
 def _create_embedding_provider(cfg: TopicModelerConfig):
@@ -34,19 +35,19 @@ def _create_embedding_provider(cfg: TopicModelerConfig):
     from interfaces import BaseEmbeddingProvider
     emb_cfg = cfg.embeddings
     cls = resolve_class(emb_cfg.class_, BaseEmbeddingProvider)
-    return cls(emb_cfg)
+    return cls(to_dictconfig(emb_cfg))
 
 
 def _create_modeler(cfg, graph_store, embedder):
     """Create TopicModeler with injected dependencies."""
     from topic_modeler.modeler import TopicModeler
-    return TopicModeler(cfg, embedder=embedder, graph_store=graph_store)
+    return TopicModeler(to_dictconfig(cfg), embedder=embedder, graph_store=graph_store)
 
 
 def _create_modeler_partial(cfg, embedder):
     """Create TopicModeler without graph_store (partial init for preview/dry-run)."""
     from topic_modeler.modeler import TopicModeler
-    return TopicModeler(cfg, embedder=embedder, graph_store=None)
+    return TopicModeler(to_dictconfig(cfg), embedder=embedder, graph_store=None)
 
 
 class TopicModelerContainer(containers.DeclarativeContainer):

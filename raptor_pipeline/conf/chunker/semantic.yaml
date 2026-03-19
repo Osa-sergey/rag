@@ -3,7 +3,7 @@
 # Требует работающий embedding provider.
 # ──────────────────────────────────────────────────────────────
 
-type: semantic
+_class_: raptor_pipeline.chunker.semantic_chunker.SemanticChunker
 
 # Порог косинусного сходства (0–1).
 # Блоки с similarity ≥ threshold объединяются в один чанк.

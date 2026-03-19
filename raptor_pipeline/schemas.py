@@ -13,12 +13,6 @@ from pydantic import BaseModel, Field, field_validator
 
 # ── Enums ─────────────────────────────────────────────────────
 
-class ChunkerType(str, Enum):
-    section = "section"
-    semantic = "semantic"
-    hybrid = "hybrid"
-
-
 class LLMProvider(str, Enum):
     deepseek = "deepseek"
     ollama = "ollama"
@@ -34,23 +28,32 @@ class EmbeddingProviderType(str, Enum):
 # ── Sub-configs ───────────────────────────────────────────────
 
 class ChunkerConfig(BaseModel):
-    """Chunker configuration."""
-    type: ChunkerType = ChunkerType.hybrid
+    """Chunker configuration.
+
+    _class_ specifies the concrete BaseChunker implementation:
+      - raptor_pipeline.chunker.hybrid_chunker.HybridChunker (default)
+      - raptor_pipeline.chunker.semantic_chunker.SemanticChunker
+      - raptor_pipeline.chunker.section_chunker.SectionChunker
+    """
+    class_: str = Field(
+        "raptor_pipeline.chunker.hybrid_chunker.HybridChunker",
+        alias="_class_",
+        description="Dotted path к классу-реализации BaseChunker",
+    )
     max_chunk_chars: int = Field(2000, ge=100, le=50_000, description="Максимальная длина чанка")
     min_chunk_chars: int = Field(200, ge=0, description="Минимальная длина чанка")
     target_chunk_chars: int = Field(800, ge=100, description="Целевая длина чанка")
     overlap_chars: int = Field(100, ge=0, description="Перекрытие при разбиении")
     similarity_threshold: float = Field(0.6, ge=0.0, le=1.0, description="Порог семантической схожести")
 
-    class Config:
-        extra = "allow"
+    model_config = {"extra": "allow", "populate_by_name": True}
 
 
 class EmbeddingsConfig(BaseModel):
     """Embedding provider configuration."""
     class_: str = Field(
         "raptor_pipeline.embeddings.providers.HuggingFaceEmbeddingProvider",
-        alias="class_",
+        alias="_class_",
         description="Dotted path to embedding provider class",
     )
     provider: EmbeddingProviderType = EmbeddingProviderType.huggingface
@@ -60,13 +63,19 @@ class EmbeddingsConfig(BaseModel):
     model_kwargs: dict[str, Any] = Field(default_factory=lambda: {"device": "cpu"})
     encode_kwargs: dict[str, Any] = Field(default_factory=lambda: {"normalize_embeddings": True})
 
-    class Config:
-        extra = "allow"
-        populate_by_name = True
+    model_config = {"extra": "allow", "populate_by_name": True}
 
 
 class SummarizerConfig(BaseModel):
-    """Summarizer configuration."""
+    """Summarizer configuration.
+
+    _class_ specifies the concrete BaseSummarizer implementation.
+    """
+    class_: str = Field(
+        "raptor_pipeline.summarizer.llm_summarizer.LLMSummarizer",
+        alias="_class_",
+        description="Dotted path к классу-реализации BaseSummarizer",
+    )
     provider: LLMProvider = LLMProvider.llama_cpp
     model_name: str = "gemma-3-12b-it"
     base_url: str = "http://localhost:8080/v1"
@@ -74,12 +83,26 @@ class SummarizerConfig(BaseModel):
     temperature: float = Field(0.3, ge=0.0, le=2.0)
     max_tokens: int = Field(2048, ge=1)
 
-    class Config:
-        extra = "allow"
+    model_config = {"extra": "allow", "populate_by_name": True}
 
 
 class KnowledgeGraphConfig(BaseModel):
-    """Knowledge graph extractor configuration."""
+    """Knowledge graph extractor configuration.
+
+    _class_ fields for each sub-component (extractor, refiner, relations).
+    """
+    kw_extractor_class: str = Field(
+        "raptor_pipeline.knowledge_graph.keyword_extractor.LLMKeywordExtractor",
+        description="Dotted path к классу-реализации BaseKeywordExtractor",
+    )
+    kw_refiner_class: str = Field(
+        "raptor_pipeline.knowledge_graph.keyword_refiner.LLMKeywordRefiner",
+        description="Dotted path к классу-реализации BaseKeywordRefiner",
+    )
+    rel_extractor_class: str = Field(
+        "raptor_pipeline.knowledge_graph.relation_extractor.LLMRelationExtractor",
+        description="Dotted path к классу-реализации BaseRelationExtractor",
+    )
     provider: LLMProvider = LLMProvider.llama_cpp
     model_name: str = "gemma-3-12b-it"
     base_url: str = "http://localhost:8080/v1"
@@ -90,8 +113,7 @@ class KnowledgeGraphConfig(BaseModel):
     max_relations: int = Field(10, ge=1, le=200)
     confidence_threshold: float = Field(0.8, ge=0.0, le=1.0)
 
-    class Config:
-        extra = "allow"
+    model_config = {"extra": "allow"}
 
 
 class RaptorConfig(BaseModel):
@@ -107,8 +129,7 @@ class PromptConfig(BaseModel):
     template: str = ""
     version: str = "1.0"
 
-    class Config:
-        extra = "allow"
+    model_config = {"extra": "allow"}
 
 
 class PromptsConfig(BaseModel):
@@ -121,26 +142,32 @@ class PromptsConfig(BaseModel):
 
 class QdrantStoreConfig(BaseModel):
     """Qdrant vector store configuration."""
+    class_: str = Field(
+        "stores.vector_store.QdrantVectorStore",
+        alias="_class_",
+        description="Dotted path к классу-реализации BaseVectorStore",
+    )
     host: str = "localhost"
     port: int = Field(6333, ge=1, le=65535)
     collection_name: str = "raptor_chunks"
     vector_size: int = Field(768, ge=1)
 
-    class Config:
-        extra = "allow"
+    model_config = {"extra": "allow", "populate_by_name": True}
 
 
 class Neo4jStoreConfig(BaseModel):
     """Neo4j graph store configuration."""
-    class_: str = Field("stores.graph_store.Neo4jGraphStore", alias="class_")
+    class_: str = Field(
+        "stores.graph_store.Neo4jGraphStore",
+        alias="_class_",
+        description="Dotted path к классу-реализации BaseGraphStore",
+    )
     uri: str = "bolt://localhost:7687"
     user: str = "neo4j"
     password: str = "raptor_password"
     database: str = "neo4j"
 
-    class Config:
-        extra = "allow"
-        populate_by_name = True
+    model_config = {"extra": "allow", "populate_by_name": True}
 
 
 class StoresConfig(BaseModel):
@@ -192,5 +219,4 @@ class RaptorPipelineConfig(BaseModel):
             raise ValueError(f"log_level must be one of {valid}, got '{v}'")
         return v.upper()
 
-    class Config:
-        extra = "allow"
+    model_config = {"extra": "allow"}
