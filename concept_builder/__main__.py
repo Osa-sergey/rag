@@ -18,6 +18,7 @@ from pathlib import Path
 import click
 
 from cli_base import add_common_commands, load_config
+from cli_base.logging import setup_logging
 from concept_builder.schemas import ConceptBuilderConfig
 
 # Force UTF-8 for Windows console
@@ -38,11 +39,7 @@ CONFIG_NAME = "config"
 @click.option("--verbose", "-v", is_flag=True, help="Подробный вывод (DEBUG)")
 def cli(verbose: bool) -> None:
     """Concept Builder — кросс-статейное объединение ключевых слов в понятия."""
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s  %(levelname)-7s  %(name)s: %(message)s",
-    )
+    cli.verbose = verbose
 
 
 # ── validate / show-config ────────────────────────────────────
@@ -70,6 +67,8 @@ def dry_run(base_article, strategy, max_articles, article_ids, no_check_connecti
       python -m concept_builder dry-run -a 986380,983714
     """
     cfg = load_config(CONFIG_DIR, CONFIG_NAME, ConceptBuilderConfig, overrides=override)
+    level = "DEBUG" if getattr(cli, "verbose", False) else cfg.log_level
+    setup_logging(level=level, log_file=cfg.log_file)
 
     from concept_builder.containers import ConceptBuilderContainer
     container = ConceptBuilderContainer(config=cfg)

@@ -27,6 +27,7 @@ import click
 from dependency_injector.wiring import Provide, inject
 
 from cli_base import add_common_commands, load_config
+from cli_base.logging import setup_logging
 from vault_parser.schemas import VaultParserConfig
 
 CONFIG_DIR = Path(__file__).parent / "conf"
@@ -34,6 +35,12 @@ CONFIG_NAME = "config"
 
 # Container — initialized once per CLI invocation
 _container = None
+
+
+def _setup_log(cfg: VaultParserConfig) -> None:
+    """Configure logging from config + verbose flag."""
+    level = "DEBUG" if getattr(cli, "verbose", False) else cfg.log_level
+    setup_logging(level=level, log_file=cfg.log_file)
 
 
 def _parse_date_range(spec: str) -> tuple[date | None, date | None]:
@@ -110,7 +117,7 @@ def _do_list_tasks(cfg: VaultParserConfig, parser=Provide["parser"]):
     elif out.format == "csv":
         click.echo(format_tasks_csv(tasks))
     else:
-        click.echo(format_tasks_table(tasks, max_items=out.max_items, show_raw=out.show_raw))
+        format_tasks_table(tasks, max_items=out.max_items, show_raw=out.show_raw)
 
 
 @inject
@@ -118,7 +125,7 @@ def _do_stats(parser=Provide["parser"]):
     """Агрегированная статистика."""
     from vault_parser.formatters import format_stats
     all_notes = parser.parse_all()
-    click.echo(format_stats(all_notes["daily"], all_notes["weekly"], all_notes["monthly"]))
+    format_stats(all_notes["daily"], all_notes["weekly"], all_notes["monthly"])
 
 
 @inject
@@ -141,7 +148,7 @@ def _do_wellness(cfg: VaultParserConfig, parser=Provide["parser"]):
     elif out.format == "csv":
         click.echo(format_wellness_csv(daily_notes))
     else:
-        click.echo(format_wellness_table(daily_notes, max_items=out.max_items))
+        format_wellness_table(daily_notes, max_items=out.max_items)
 
 
 @inject
@@ -163,7 +170,7 @@ def _do_people(cfg: VaultParserConfig, parser=Provide["parser"]):
             data.append({"name": g.name, "is_group": True, "members": g.members})
         click.echo(json.dumps(data, ensure_ascii=False, indent=2))
     else:
-        click.echo(format_people_table(registry))
+        format_people_table(registry)
 
 
 @inject
@@ -371,12 +378,7 @@ def cli(verbose: bool) -> None:
     Парсинг дневных, недельных и месячных заметок из Obsidian-вольта
     с фильтрацией, поиском и автоматическим реестром людей.
     """
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="[%(asctime)s][%(name)s][%(levelname)s] %(message)s",
-        stream=sys.stdout,
-    )
+    cli.verbose = verbose
 
 
 # ── list-tasks ────────────────────────────────────────────────
@@ -429,6 +431,7 @@ def list_tasks_cmd(status, priority, date_range, person, section, query,
 
     cfg = load_config(CONFIG_DIR, CONFIG_NAME, VaultParserConfig,
                       overrides=override, mode="list-tasks", **overrides)
+    _setup_log(cfg)
     _init_container(cfg)
     _do_list_tasks(cfg)
 
@@ -457,6 +460,7 @@ def search(query, fmt, max_items, override):
 
     cfg = load_config(CONFIG_DIR, CONFIG_NAME, VaultParserConfig,
                       overrides=override, **overrides)
+    _setup_log(cfg)
     _init_container(cfg)
     _do_list_tasks(cfg)
 
@@ -469,6 +473,7 @@ def stats(override):
     """Агрегированная статистика по вольту."""
     cfg = load_config(CONFIG_DIR, CONFIG_NAME, VaultParserConfig,
                       overrides=override, mode="stats")
+    _setup_log(cfg)
     _init_container(cfg)
     _do_stats()
 
@@ -501,6 +506,7 @@ def wellness(date_range, fmt, max_items, override):
 
     cfg = load_config(CONFIG_DIR, CONFIG_NAME, VaultParserConfig,
                       overrides=override, mode="wellness", **overrides)
+    _setup_log(cfg)
     _init_container(cfg)
     _do_wellness(cfg)
 
@@ -524,6 +530,7 @@ def people(fmt, override):
         overrides["output.format"] = fmt
     cfg = load_config(CONFIG_DIR, CONFIG_NAME, VaultParserConfig,
                       overrides=override, mode="people", **overrides)
+    _setup_log(cfg)
     _init_container(cfg)
     _do_people(cfg)
 
@@ -562,6 +569,7 @@ def edit(note_date, action, text, section, query, override):
 
     cfg = load_config(CONFIG_DIR, CONFIG_NAME, VaultParserConfig,
                       overrides=override, **overrides)
+    _setup_log(cfg)
     _init_container(cfg)
     _do_edit(cfg, note_date, action, section)
 
@@ -574,6 +582,7 @@ def parse(override):
     """Полный JSON-дамп всех заметок."""
     cfg = load_config(CONFIG_DIR, CONFIG_NAME, VaultParserConfig,
                       overrides=override, mode="parse")
+    _setup_log(cfg)
     _init_container(cfg)
     _do_parse()
 

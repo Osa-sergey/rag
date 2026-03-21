@@ -188,6 +188,7 @@ class RaptorPipelineConfig(BaseModel):
     input_dir: str = "parsed_yaml"
     input_file: Optional[str] = None
     log_level: str = "DEBUG"
+    log_file: Optional[str] = Field(None, description="Путь к файлу логов JSON (None = только консоль)")
     max_concurrency: int = Field(2, ge=1, le=64, description="Потоки для LLM")
     batch_size: int = Field(16, ge=1, le=256, description="Размер батча")
     full_text: bool = False

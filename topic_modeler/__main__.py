@@ -21,6 +21,7 @@ import click
 from dependency_injector.wiring import Provide, inject
 
 from cli_base import add_common_commands, load_config
+from cli_base.logging import setup_logging
 from topic_modeler.schemas import TopicModelerConfig
 
 CONFIG_DIR = Path(__file__).parent / "conf"
@@ -83,12 +84,7 @@ def cli(verbose: bool) -> None:
     Тематическое моделирование статей: обучение, предсказание топиков,
     обогащение графа знаний Neo4j.
     """
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="[%(asctime)s][%(name)s][%(levelname)s] %(message)s",
-        stream=sys.stdout,
-    )
+    cli.verbose = verbose
 
 
 @cli.command()
@@ -129,6 +125,8 @@ def train(input_dir, model_dir, device, min_cluster_size, nr_topics, override):
     # 2. Load + validate config
     cfg = load_config(CONFIG_DIR, CONFIG_NAME, TopicModelerConfig,
                       overrides=override, **click_overrides)
+    level = "DEBUG" if getattr(cli, "verbose", False) else cfg.log_level
+    setup_logging(level=level, log_file=cfg.log_file)
 
     # 3. Init container + wire
     _init_container(cfg)
@@ -163,6 +161,8 @@ def add_article(article_path, model_dir, override):
     # 2. Config
     cfg = load_config(CONFIG_DIR, CONFIG_NAME, TopicModelerConfig,
                       overrides=override, **click_overrides)
+    level = "DEBUG" if getattr(cli, "verbose", False) else cfg.log_level
+    setup_logging(level=level, log_file=cfg.log_file)
 
     # 3. Container
     _init_container(cfg)

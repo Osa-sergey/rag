@@ -26,6 +26,7 @@ class DocumentParserConfig(BaseModel):
 
     # Уровень логирования
     log_level: str = "INFO"
+    log_file: Optional[str] = Field(None, description="Путь к файлу логов JSON (None = только консоль)")
 
     @field_validator("input_file", mode="before")
     @classmethod

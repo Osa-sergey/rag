@@ -15,6 +15,7 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 
 from voice_expense_bot.schemas import VoiceExpenseConfig
+from cli_base.logging import setup_logging
 
 
 logger = logging.getLogger(__name__)
@@ -78,11 +79,7 @@ def main(raw_cfg: DictConfig) -> None:
     cfg = VoiceExpenseConfig(**cfg_dict)
 
     # Configure logging
-    logging.basicConfig(
-        level=getattr(logging, cfg.log_level, logging.INFO),
-        format="%(asctime)s [%(name)-30s] %(levelname)-7s %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    setup_logging(level=cfg.log_level, log_file=cfg.log_file)
 
     logger.info("Voice Expense Bot starting with config:")
     logger.info("  GigaAM model: %s", cfg.transcriber.model_name)

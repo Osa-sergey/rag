@@ -111,6 +111,7 @@ class ConceptBuilderConfig(BaseModel):
     Validated at startup.
     """
     log_level: str = "INFO"
+    log_file: Optional[str] = Field(None, description="Путь к файлу логов JSON (None = только консоль)")
 
     # Thresholds
     similarity_threshold: float = Field(

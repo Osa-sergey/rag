@@ -23,3 +23,4 @@ assets_dir: assets
 
 # Уровень логирования
 log_level: INFO
+# log_file: logs/document_parser.jsonl
