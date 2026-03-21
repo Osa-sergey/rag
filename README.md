@@ -209,11 +209,13 @@ python -m raptor_pipeline.main knowledge_graph=llama_cpp max_concurrency=8 batch
 
 ```powershell
 # 1. Qdrant
-docker run --rm -v qdrant_data:/data -v ${PWD}:/backup alpine tar czf /backup/qdrant_backup.tar.gz -C /data .
+docker stop raptor_qdrant
+docker run --rm -v rag_qdrant_data:/data -v ${PWD}:/backup alpine tar czf /backup/qdrant_backup.tar.gz -C /data .
+docker start raptor_qdrant
 
 # 2. Neo4j (обязательно остановить перед бэкапом)
 docker stop raptor_neo4j
-docker run --rm -v neo4j_data:/data -v ${PWD}:/backup alpine tar czf /backup/neo4j_backup.tar.gz -C /data .
+docker run --rm -v rag_neo4j_data:/data -v ${PWD}:/backup alpine tar czf /backup/neo4j_backup.tar.gz -C /data .
 docker start raptor_neo4j
 ```
 
@@ -229,10 +231,10 @@ docker compose up -d
 docker stop raptor_qdrant raptor_neo4j
 
 # 3. Восстановить Qdrant
-docker run --rm -v qdrant_data:/data -v ${PWD}:/backup alpine sh -c "rm -rf /data/* && tar xzf /backup/qdrant_backup.tar.gz -C /data"
+docker run --rm -v rag_qdrant_data:/data -v ${PWD}:/backup alpine sh -c "rm -rf /data/* && tar xzf /backup/qdrant_backup.tar.gz -C /data"
 
 # 4. Восстановить Neo4j
-docker run --rm -v neo4j_data:/data -v ${PWD}:/backup alpine sh -c "rm -rf /data/* && tar xzf /backup/neo4j_backup.tar.gz -C /data"
+docker run --rm -v rag_neo4j_data:/data -v ${PWD}:/backup alpine sh -c "rm -rf /data/* && tar xzf /backup/neo4j_backup.tar.gz -C /data"
 
 # 5. Запустить
 docker start raptor_qdrant raptor_neo4j
