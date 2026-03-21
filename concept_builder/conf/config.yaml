@@ -3,6 +3,7 @@ defaults:
   - _self_
 
 log_level: INFO
+# log_file: logs/concept_builder.jsonl
 
 # ── Thresholds ────────────────────────────────────────────────
 similarity_threshold: 0.75     # cosine ≥ 0.85 → same Concept
@@ -37,7 +38,7 @@ llm:
 
 # ── Embeddings ────────────────────────────────────────────────
 embeddings:
-  class_: raptor_pipeline.embeddings.providers.HuggingFaceEmbeddingProvider
+  _class_: raptor_pipeline.embeddings.providers.HuggingFaceEmbeddingProvider
   provider: huggingface
   model_name: sergeyzh/BERTA
   embedding_dim: 768
@@ -117,7 +118,7 @@ stores:
     vector_size: 768
 
   neo4j:
-    class_: stores.graph_store.Neo4jGraphStore
+    _class_: stores.graph_store.Neo4jGraphStore
     uri: bolt://localhost:7687
     user: neo4j
     password: raptor_password

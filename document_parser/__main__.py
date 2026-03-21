@@ -21,6 +21,7 @@ from pathlib import Path
 import click
 
 from cli_base import add_common_commands, load_config
+from cli_base.logging import setup_logging
 from document_parser.schemas import DocumentParserConfig
 
 # Force UTF-8 for Windows console
@@ -41,11 +42,7 @@ CONFIG_NAME = "config"
 @click.option("--verbose", "-v", is_flag=True, help="Подробный вывод (DEBUG)")
 def cli(verbose: bool) -> None:
     """Document Parser — парсинг HTML/Markdown документов в структурированный YAML."""
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s  %(levelname)-7s  %(name)s: %(message)s",
-    )
+    cli.verbose = verbose
 
 
 # ── validate / show-config (из cli_base) ──────────────────────
@@ -78,6 +75,8 @@ def parse_csv(input_file, output_dir, html_column, override):
 
     cfg = load_config(CONFIG_DIR, CONFIG_NAME, DocumentParserConfig,
                       overrides=override, **overrides)
+    level = "DEBUG" if getattr(cli, "verbose", False) else cfg.log_level
+    setup_logging(level=level, log_file=cfg.log_file)
 
     from document_parser.structurizer import process_csv
 

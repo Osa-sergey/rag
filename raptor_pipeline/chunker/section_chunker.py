@@ -16,7 +16,7 @@ class SectionChunker(BaseChunker):
     are split with overlap_chars overlap.
     """
 
-    def __init__(self, cfg: DictConfig) -> None:
+    def __init__(self, cfg: DictConfig, *, embedding_provider=None) -> None:
         self.min_chunk_chars: int = cfg.get("min_chunk_chars", 200)
         self.target_chunk_chars: int = cfg.get("target_chunk_chars", 800)
         self.max_chunk_chars: int = cfg.get("max_chunk_chars", 2000)

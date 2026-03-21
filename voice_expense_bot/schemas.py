@@ -169,6 +169,7 @@ class VoiceExpenseConfig(BaseModel):
     """
 
     log_level: str = "INFO"
+    log_file: Optional[str] = Field(None, description="Путь к файлу логов JSON (None = только консоль)")
 
     transcriber: TranscriberConfig = Field(default_factory=TranscriberConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)

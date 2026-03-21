@@ -43,6 +43,9 @@ dependencies = [
     "redis>=5.0.0",
     # Progress bars
     "tqdm>=4.66.0",
+    # Logging & output
+    "rich>=13.0.0",
+    "structlog>=24.0.0",
 ]
 
 [build-system]

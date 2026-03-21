@@ -6,51 +6,41 @@ Follows the same pattern as raptor_pipeline/containers.py:
 from __future__ import annotations
 
 from dependency_injector import containers, providers
-from omegaconf import OmegaConf, DictConfig
-from pydantic import BaseModel
 
 from cli_base.class_resolver import resolve_class
+from cli_base.config_utils import to_dictconfig
 from interfaces import BaseConceptClusterer
 from concept_builder.schemas import ConceptBuilderConfig
-
-
-def _to_dictconfig(obj) -> DictConfig:
-    """Convert Pydantic model or dict to OmegaConf DictConfig."""
-    if isinstance(obj, DictConfig):
-        return obj
-    if isinstance(obj, BaseModel):
-        return OmegaConf.create(obj.model_dump(by_alias=True))
-    if isinstance(obj, dict):
-        return OmegaConf.create(obj)
-    return obj
 
 
 def _create_embedding_provider(cfg: ConceptBuilderConfig):
     """Resolve and instantiate embedding provider."""
     from interfaces import BaseEmbeddingProvider
     cls = resolve_class(cfg.embeddings.class_, BaseEmbeddingProvider)
-    return cls(_to_dictconfig(cfg.embeddings))
+    return cls(to_dictconfig(cfg.embeddings))
 
 
 def _create_graph_store(cfg: ConceptBuilderConfig):
     """Resolve and instantiate graph store."""
     from interfaces import BaseGraphStore
     cls = resolve_class(cfg.stores.neo4j.class_, BaseGraphStore)
-    return cls(_to_dictconfig(cfg.stores.neo4j))
+    return cls(to_dictconfig(cfg.stores.neo4j))
 
 
 def _create_vector_store(cfg: ConceptBuilderConfig):
-    """Create Qdrant vector store."""
-    from stores.vector_store import QdrantVectorStore
-    return QdrantVectorStore(_to_dictconfig(cfg.stores.qdrant))
+    """Resolve and instantiate vector store."""
+    from interfaces import BaseVectorStore
+    cls = resolve_class(cfg.stores.qdrant.class_, BaseVectorStore)
+    return cls(to_dictconfig(cfg.stores.qdrant))
 
 
 def _create_keyword_describer(cfg: ConceptBuilderConfig, vector_store, embedder, tracker):
-    """Create keyword describer."""
-    from concept_builder.keyword_describer import KeywordDescriber
-    return KeywordDescriber(
-        _to_dictconfig(cfg.llm),
-        _to_dictconfig(cfg.prompts.keyword_description),
+    """Resolve and instantiate keyword describer."""
+    from interfaces import BaseKeywordDescriber
+    cls = resolve_class(cfg.keyword_describer_class, BaseKeywordDescriber)
+    return cls(
+        to_dictconfig(cfg.llm),
+        to_dictconfig(cfg.prompts.keyword_description),
         vector_store=vector_store,
         embedder=embedder,
         tracker=tracker,
@@ -62,23 +52,25 @@ def _create_relation_builder(cfg: ConceptBuilderConfig, tracker):
     """Create relation builder."""
     from concept_builder.relation_builder import RelationBuilder
     return RelationBuilder(
-        _to_dictconfig(cfg.llm),
-        _to_dictconfig(cfg.prompts.cross_relations),
+        to_dictconfig(cfg.llm),
+        to_dictconfig(cfg.prompts.cross_relations),
         tracker=tracker,
         max_prompt_tokens=cfg.max_prompt_tokens,
     )
 
 
-def _create_article_selector(graph_store):
-    """Create article selector."""
-    from concept_builder.article_selector import ArticleSelector
-    return ArticleSelector(graph_store)
+def _create_article_selector(cfg: ConceptBuilderConfig, graph_store):
+    """Resolve and instantiate article selector."""
+    from interfaces import BaseArticleSelector
+    cls = resolve_class(cfg.article_selector_class, BaseArticleSelector)
+    return cls(graph_store)
 
 
-def _create_inspector(graph_store, vector_store):
-    """Create concept inspector."""
-    from concept_builder.inspector import ConceptInspector
-    return ConceptInspector(graph_store, vector_store)
+def _create_inspector(cfg: ConceptBuilderConfig, graph_store, vector_store):
+    """Resolve and instantiate concept inspector."""
+    from interfaces import BaseConceptInspector
+    cls = resolve_class(cfg.inspector_class, BaseConceptInspector)
+    return cls(graph_store, vector_store)
 
 
 def _create_concept_clusterer(cfg: ConceptBuilderConfig):
@@ -98,7 +90,7 @@ def _create_processor(cfg, graph_store, vector_store, embedder,
     """Assemble the full processor with all dependencies."""
     from concept_builder.processor import CrossArticleProcessor
     return CrossArticleProcessor(
-        _to_dictconfig(cfg),
+        to_dictconfig(cfg),
         graph_store=graph_store,
         vector_store=vector_store,
         embedder=embedder,
@@ -111,6 +103,8 @@ def _create_processor(cfg, graph_store, vector_store, embedder,
 
 class ConceptBuilderContainer(containers.DeclarativeContainer):
     """DI container for Concept Builder.
+
+    All components are resolved from _class_ in config via resolve_class.
 
     Usage::
 
@@ -142,6 +136,7 @@ class ConceptBuilderContainer(containers.DeclarativeContainer):
     # ── Components ────────────────────────────────────────────
     article_selector = providers.Factory(
         _create_article_selector,
+        cfg=config,
         graph_store=graph_store,
     )
     keyword_describer = providers.Factory(
@@ -162,6 +157,7 @@ class ConceptBuilderContainer(containers.DeclarativeContainer):
     )
     inspector = providers.Factory(
         _create_inspector,
+        cfg=config,
         graph_store=graph_store,
         vector_store=vector_store,
     )

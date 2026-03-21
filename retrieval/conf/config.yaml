@@ -1,6 +1,7 @@
 # Retrieval module config
 
 log_level: INFO
+# log_file: logs/retrieval.jsonl
 
 # ── LLM (for query rephrasing) ────────────────────────────────
 llm:

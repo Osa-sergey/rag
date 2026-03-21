@@ -37,34 +37,36 @@ class ConceptPromptsConfig(BaseModel):
 
 class ConceptQdrantConfig(BaseModel):
     """Qdrant settings for concept collections."""
+    class_: str = Field(
+        "stores.vector_store.QdrantVectorStore",
+        alias="_class_",
+        description="Dotted path к классу-реализации BaseVectorStore",
+    )
     host: str = "localhost"
     port: int = Field(6333, ge=1, le=65535)
     concepts_collection: str = "concepts"
     cross_relations_collection: str = "cross_relations"
     vector_size: int = Field(768, ge=1)
 
-    class Config:
-        extra = "allow"
+    model_config = {"extra": "allow", "populate_by_name": True}
 
 
 class ConceptNeo4jConfig(BaseModel):
     """Neo4j settings (reuse from raptor_pipeline)."""
-    class_: str = Field("stores.graph_store.Neo4jGraphStore", alias="class_")
+    class_: str = Field("stores.graph_store.Neo4jGraphStore", alias="_class_")
     uri: str = "bolt://localhost:7687"
     user: str = "neo4j"
     password: str = "raptor_password"
     database: str = "neo4j"
 
-    class Config:
-        extra = "allow"
-        populate_by_name = True
+    model_config = {"extra": "allow", "populate_by_name": True}
 
 
 class ConceptEmbeddingsConfig(BaseModel):
     """Embedding settings (reuse from raptor_pipeline)."""
     class_: str = Field(
         "raptor_pipeline.embeddings.providers.HuggingFaceEmbeddingProvider",
-        alias="class_",
+        alias="_class_",
     )
     provider: str = "huggingface"
     model_name: str = "sergeyzh/BERTA"
@@ -73,9 +75,7 @@ class ConceptEmbeddingsConfig(BaseModel):
     model_kwargs: dict = Field(default_factory=lambda: {"device": "cpu"})
     encode_kwargs: dict = Field(default_factory=lambda: {"normalize_embeddings": True})
 
-    class Config:
-        extra = "allow"
-        populate_by_name = True
+    model_config = {"extra": "allow", "populate_by_name": True}
 
 
 class ConceptStoresConfig(BaseModel):
@@ -94,7 +94,7 @@ class ClusteringConfig(BaseModel):
     """
     class_: str = Field(
         "concept_builder.concept_clusterer.GreedyConceptClusterer",
-        alias="class_",
+        alias="_class_",
     )
     # HDBSCAN params (ignored for greedy)
     min_cluster_size: int = Field(2, ge=2)
@@ -102,9 +102,7 @@ class ClusteringConfig(BaseModel):
     cluster_selection_epsilon: float = Field(0.15, ge=0.0)
     metric: str = "euclidean"
 
-    class Config:
-        extra = "allow"
-        populate_by_name = True
+    model_config = {"extra": "allow", "populate_by_name": True}
 
 
 class ConceptBuilderConfig(BaseModel):
@@ -113,6 +111,7 @@ class ConceptBuilderConfig(BaseModel):
     Validated at startup.
     """
     log_level: str = "INFO"
+    log_file: Optional[str] = Field(None, description="Путь к файлу логов JSON (None = только консоль)")
 
     # Thresholds
     similarity_threshold: float = Field(
@@ -132,6 +131,20 @@ class ConceptBuilderConfig(BaseModel):
     default_strategy: str = "bfs"
     default_max_articles: int = Field(20, ge=1)
 
+    # _class_ fields for swappable components
+    article_selector_class: str = Field(
+        "concept_builder.article_selector.ArticleSelector",
+        description="Dotted path к классу-реализации BaseArticleSelector",
+    )
+    keyword_describer_class: str = Field(
+        "concept_builder.keyword_describer.KeywordDescriber",
+        description="Dotted path к классу-реализации BaseKeywordDescriber",
+    )
+    inspector_class: str = Field(
+        "concept_builder.inspector.ConceptInspector",
+        description="Dotted path к классу-реализации BaseConceptInspector",
+    )
+
     # Sub-configs
     llm: ConceptLLMConfig = Field(default_factory=ConceptLLMConfig)
     embeddings: ConceptEmbeddingsConfig = Field(default_factory=ConceptEmbeddingsConfig)
@@ -139,5 +152,4 @@ class ConceptBuilderConfig(BaseModel):
     stores: ConceptStoresConfig = Field(default_factory=ConceptStoresConfig)
     clustering: ClusteringConfig = Field(default_factory=ClusteringConfig)
 
-    class Config:
-        extra = "allow"
+    model_config = {"extra": "allow"}

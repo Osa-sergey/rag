@@ -1,6 +1,10 @@
 # Topic Modeler — Hydra configuration
 # ═══════════════════════════════════
 
+# ── Logging ────────────────────────
+log_level: INFO
+# log_file: logs/topic_modeler.jsonl
+
 # ── Mode ──────────────────────────
 # train         — fit BERTopic on all articles
 # add_article   — predict topic for a new article

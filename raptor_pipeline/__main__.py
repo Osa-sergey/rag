@@ -13,8 +13,8 @@ Usage:
 """
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -22,6 +22,7 @@ import click
 from dependency_injector.wiring import Provide, inject
 
 from cli_base import add_common_commands, load_config
+from cli_base.logging import setup_logging
 from raptor_pipeline.schemas import RaptorPipelineConfig
 
 # Force UTF-8 for Windows console
@@ -77,11 +78,9 @@ def _do_run(cfg: RaptorPipelineConfig, pipeline=Provide["pipeline"]):
 @click.option("--verbose", "-v", is_flag=True, help="Подробный вывод (DEBUG)")
 def cli(verbose: bool) -> None:
     """RAPTOR Pipeline — индексация документов в графовое + векторное хранилище."""
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s  %(levelname)-7s  %(name)s: %(message)s",
-    )
+    # Logging will be fully configured after config is loaded (in each command).
+    # Here we just store the verbose flag for later use.
+    cli.verbose = verbose
 
 
 # ── validate / show-config (из cli_base) ──────────────────────
@@ -112,6 +111,8 @@ def run(input_dir, input_file, override):
 
     cfg = load_config(CONFIG_DIR, CONFIG_NAME, RaptorPipelineConfig,
                       overrides=override, **overrides)
+    level = "DEBUG" if getattr(cli, "verbose", False) else cfg.log_level
+    setup_logging(level=level, log_file=cfg.log_file)
     _init_container(cfg)
     _do_run(cfg)
 

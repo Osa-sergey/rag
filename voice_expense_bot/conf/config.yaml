@@ -15,3 +15,4 @@ defaults:
   - _self_
 
 log_level: INFO
+# log_file: logs/voice_expense_bot.jsonl

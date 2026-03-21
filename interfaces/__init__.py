@@ -1,46 +1,69 @@
-"""Abstract base classes (contracts) for all swappable components.
+"""Public API for all abstract base classes.
 
-All ABCs live here so that any module can import them without
-circular dependencies on concrete implementations.
+Import via::
 
-Concrete implementations can be swapped via ``_class_`` field in YAML config,
-validated at runtime by ``cli_base.class_resolver.resolve_class()``.
+    from interfaces import BaseGraphStore, BaseChunker, ...
+
+Internal layout — one file per domain::
+
+    interfaces/
+        embeddings.py       — BaseEmbeddingProvider
+        stores.py           — BaseGraphStore, BaseVectorStore
+        chunker.py          — BaseChunker
+        summarizer.py       — BaseSummarizer
+        knowledge_graph.py  — BaseKeywordExtractor, BaseKeywordRefiner, BaseRelationExtractor
+        vault_parser.py     — BaseVaultParser, BaseNoteEditor, BaseDailyNoteEditor, BaseWellnessEditor
+        concept_builder.py  — BaseArticleSelector, BaseKeywordDescriber, BaseConceptClusterer, BaseConceptInspector
 """
-from interfaces.base import (
-    BaseArticleSelector,
-    BaseChunker,
-    BaseConceptClusterer,
-    BaseConceptInspector,
-    BaseDailyNoteEditor,
-    BaseEmbeddingProvider,
-    BaseGraphStore,
-    BaseKeywordDescriber,
+
+# ── Embeddings / Stores ──────────────────────────────────────
+from interfaces.embeddings import BaseEmbeddingProvider
+from interfaces.stores import BaseGraphStore, BaseVectorStore
+
+# ── RAPTOR pipeline ──────────────────────────────────────────
+from interfaces.chunker import BaseChunker
+from interfaces.summarizer import BaseSummarizer
+from interfaces.knowledge_graph import (
     BaseKeywordExtractor,
     BaseKeywordRefiner,
-    BaseNoteEditor,
     BaseRelationExtractor,
-    BaseSummarizer,
+)
+
+# ── Vault parser ─────────────────────────────────────────────
+from interfaces.vault_parser import (
     BaseVaultParser,
-    BaseVectorStore,
+    BaseNoteEditor,
+    BaseDailyNoteEditor,
     BaseWellnessEditor,
 )
 
+# ── Concept builder ──────────────────────────────────────────
+from interfaces.concept_builder import (
+    BaseArticleSelector,
+    BaseKeywordDescriber,
+    BaseConceptClusterer,
+    BaseConceptInspector,
+)
+
 __all__ = [
-    "BaseArticleSelector",
-    "BaseChunker",
-    "BaseConceptClusterer",
-    "BaseConceptInspector",
-    "BaseDailyNoteEditor",
+    # Embeddings / Stores
     "BaseEmbeddingProvider",
     "BaseGraphStore",
-    "BaseKeywordDescriber",
+    "BaseVectorStore",
+    # RAPTOR pipeline
+    "BaseChunker",
+    "BaseSummarizer",
     "BaseKeywordExtractor",
     "BaseKeywordRefiner",
-    "BaseNoteEditor",
     "BaseRelationExtractor",
-    "BaseSummarizer",
+    # Vault parser
     "BaseVaultParser",
-    "BaseVectorStore",
+    "BaseNoteEditor",
+    "BaseDailyNoteEditor",
     "BaseWellnessEditor",
+    # Concept builder
+    "BaseArticleSelector",
+    "BaseKeywordDescriber",
+    "BaseConceptClusterer",
+    "BaseConceptInspector",
 ]
-

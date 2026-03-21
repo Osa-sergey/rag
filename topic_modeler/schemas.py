@@ -156,6 +156,8 @@ class TopicModelerConfig(BaseModel):
       - hdbscan.min_cluster_size >= bertopic.min_topic_size
       - umap.n_components < embeddings.embedding_dim
     """
+    log_level: str = "INFO"
+    log_file: Optional[str] = Field(None, description="Путь к файлу логов JSON (None = только консоль)")
     mode: str = Field("train", description="Режим: train | add_article")
     input_dir: str = Field("parsed_yaml", description="Директория с YAML-статьями")
     article_path: Optional[str] = Field(None, description="Путь к статье (add_article)")

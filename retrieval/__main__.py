@@ -13,6 +13,8 @@ from pathlib import Path
 import click
 from omegaconf import OmegaConf
 
+from cli_base.logging import setup_logging
+
 # ── Config ────────────────────────────────────────────────────
 CONFIG_DIR = str(Path(__file__).parent / "conf")
 CONFIG_NAME = "config"
@@ -42,11 +44,7 @@ def _format_scores(scores_by_query: dict[str, float], q_labels: dict[str, str]) 
 @click.option("-v", "--verbose", is_flag=True, help="DEBUG logging")
 def cli(verbose: bool) -> None:
     """Retrieval — multi-source RAG retrieval for quality analysis."""
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s  %(levelname)-8s %(name)s: %(message)s",
-    )
+    cli.verbose = verbose
 
 
 # ══════════════════════════════════════════════════════════════
@@ -69,14 +67,21 @@ def search(query, top_k, no_rephrase, level, override):
       python -m retrieval search "vector search" -l 0
     """
     cfg = load_config(override)
+    level = "DEBUG" if getattr(cli, "verbose", False) else cfg.get("log_level", "INFO")
+    setup_logging(level=level, log_file=cfg.get("log_file"))
     top_k = top_k or cfg.get("top_k", 10)
 
     # Build dependencies
     from raptor_pipeline.embeddings.providers import create_embedding_provider
     embedder = create_embedding_provider(cfg.embeddings)
 
-    from stores.graph_store import Neo4jGraphStore
-    gs = Neo4jGraphStore(cfg.stores.neo4j)
+    from cli_base.class_resolver import resolve_class
+    from interfaces import BaseGraphStore
+    gs_cls = resolve_class(
+        cfg.stores.neo4j.get("_class_", "stores.graph_store.Neo4jGraphStore"),
+        BaseGraphStore,
+    )
+    gs = gs_cls(cfg.stores.neo4j)
 
     from retrieval.retriever import MultiSourceRetriever
     retriever = MultiSourceRetriever(

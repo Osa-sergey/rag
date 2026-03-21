@@ -98,6 +98,10 @@ class VaultParserConfig(BaseModel):
     """
     vault: VaultConfig
 
+    # Logging
+    log_level: str = Field("INFO", description="Уровень логирования")
+    log_file: Optional[str] = Field(None, description="Путь к файлу логов JSON (None = только консоль)")
+
     # Swappable implementations (dotted path → validated via resolve_class)
     parser_class: str = Field(
         "vault_parser.parser.VaultParser",

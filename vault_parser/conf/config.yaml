@@ -6,6 +6,10 @@ vault:
   people_dir: "D:\\vault\\project_live\\people"
   template_path: "D:\\vault\\project_live\\zettelkasten\\templates\\t_daily.md"
 
+# Logging
+log_level: INFO
+# log_file: logs/vault_parser.jsonl
+
 # Swappable class implementations
 parser_class: vault_parser.parser.VaultParser
 editor_class: vault_parser.writer.editor.DailyNoteEditor
