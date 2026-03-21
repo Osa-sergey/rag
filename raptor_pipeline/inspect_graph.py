@@ -268,7 +268,7 @@ def main(cfg: DictConfig, article_id: str | None = None, min_confidence: float |
                     # Show chunk text once per group
                     if c_id and c_id != "(no chunk)" and c_id not in processed_chunks:
                         text = get_chunk_text(q_client, q_collection, c_id)
-                        chunk_branch.add(Panel(text, title="Source Text", border_style="dim", width=90))
+                        chunk_branch.add(Panel(text, title=f"📄 Исходный текст  [dim]{c_id}[/dim]", border_style="green", width=90))
                         processed_chunks.add(c_id)
             
             # 2. Articles mentioning this keyword
@@ -276,7 +276,8 @@ def main(cfg: DictConfig, article_id: str | None = None, min_confidence: float |
                 """
                 MATCH (a:Article)-[r:HAS_KEYWORD]->(k:Keyword {word: $word})
                 RETURN a.id AS article_id, a.article_name AS article_name,
-                       r.confidence AS confidence, r.chunk_ids AS chunk_ids
+                       r.confidence AS confidence, r.chunk_ids AS chunk_ids,
+                       r.description AS description
                 """,
                 word=keyword_to_inspect
             )
@@ -292,9 +293,12 @@ def main(cfg: DictConfig, article_id: str | None = None, min_confidence: float |
                     conf_str = f" conf={conf:.2f}" if conf is not None else " conf=NULL"
                     name = art.get('article_name') or ''
                     name_str = f" ({name})" if name else ''
-                    arts_branch.add(
+                    art_branch = arts_branch.add(
                         f"[cyan]{art['article_id']}[/cyan]{name_str} [dim]{conf_str}  [{len(c_ids)} chunks][/dim]"
                     )
+                    desc = art.get('description')
+                    if desc:
+                        art_branch.add(Panel(desc, title="📝 Описание keyword", border_style="dim", width=85))
 
             # 3. Cross-article references
             result = session.run(
@@ -328,7 +332,7 @@ def main(cfg: DictConfig, article_id: str | None = None, min_confidence: float |
                     for c_id in c_ids:
                         if c_id:
                             text = get_chunk_text(q_client, q_collection, c_id)
-                            ref_branch.add(Panel(text, title=f"Chunk {c_id}", border_style="dim", width=80))
+                            ref_branch.add(Panel(text, title=f"📄 Исходный текст  [dim]{c_id}[/dim]", border_style="green", width=80))
 
             console.print(kw_tree)
 

@@ -141,12 +141,16 @@ def _list_articles_qdrant(cfg: RaptorPipelineConfig) -> None:
         click.echo("Нет данных в Qdrant.")
         return
 
-    click.echo(f"\nСтатьи в Qdrant (коллекция '{collection}'):")
-    click.echo("=" * 50)
+    from cli_base.logging import get_console
+    from rich.table import Table
+    console = get_console()
+    tbl = Table(title=f"Статьи в Qdrant (коллекция '{collection}')")
+    tbl.add_column("Article ID", style="cyan")
+    tbl.add_column("Nodes", justify="right")
     for aid in sorted(article_ids):
-        click.echo(f"  {aid}  ({article_ids[aid]} nodes)")
-    click.echo("=" * 50)
-    click.echo(f"Всего: {len(article_ids)} статей, {sum(article_ids.values())} nodes")
+        tbl.add_row(aid, str(article_ids[aid]))
+    console.print(tbl)
+    console.print(f"  Всего: {len(article_ids)} статей, {sum(article_ids.values())} nodes")
 
 
 def _list_articles_neo4j(cfg: RaptorPipelineConfig) -> None:
@@ -173,16 +177,21 @@ def _list_articles_neo4j(cfg: RaptorPipelineConfig) -> None:
         click.echo("Нет статей в Neo4j.")
         return
 
-    click.echo(f"\nСтатьи в Neo4j:")
-    click.echo("=" * 60)
+    from cli_base.logging import get_console
+    from rich.table import Table
+    console = get_console()
+    tbl = Table(title="Статьи в Neo4j")
+    tbl.add_column("Article ID", style="cyan")
+    tbl.add_column("Name", style="dim")
+    tbl.add_column("Keywords", justify="right")
+    tbl.add_column("📋", justify="center", width=3)
     for art in articles:
         name = art.get("name") or ""
-        name_str = f"  ({name})" if name else ""
-        summary_flag = " 📋" if art.get("has_summary") else ""
+        summary_flag = "✓" if art.get("has_summary") else ""
         kw_count = art.get("kw_count", 0)
-        click.echo(f"  {art['id']}{name_str}  — {kw_count} keywords{summary_flag}")
-    click.echo("=" * 60)
-    click.echo(f"Всего: {len(articles)} статей")
+        tbl.add_row(str(art['id']), name, str(kw_count), summary_flag)
+    console.print(tbl)
+    console.print(f"  Всего: {len(articles)} статей")
 
 
 @cli.command("inspect-tree")

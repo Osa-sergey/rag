@@ -27,16 +27,21 @@ class ConceptInspector(BaseConceptInspector):
                 """
                 MATCH (c:Concept {id: $id})
                 OPTIONAL MATCH (k:Keyword)-[:INSTANCE_OF]->(c)
-                OPTIONAL MATCH (a:Article)-[:HAS_KEYWORD]->(k)
+                OPTIONAL MATCH (a:Article)-[r:HAS_KEYWORD]->(k)
                 RETURN c.canonical_name AS name,
                        c.domain AS domain,
                        c.description AS description,
                        c.source_articles AS source_articles,
+                       c.run_id AS run_id,
+                       c.version AS version,
+                       c.is_active AS is_active,
                        collect(DISTINCT k.word) AS keywords,
                        collect(DISTINCT {
                            word: k.word,
                            article_id: a.id,
-                           article_name: a.article_name
+                           article_name: a.article_name,
+                           confidence: r.confidence,
+                           description: r.description
                        }) AS keyword_articles
                 """,
                 id=concept_id,
@@ -79,6 +84,8 @@ class ConceptInspector(BaseConceptInspector):
                 "word": ka["word"],
                 "article_id": ka.get("article_id"),
                 "article_name": ka.get("article_name"),
+                "confidence": ka.get("confidence"),
+                "description": ka.get("description"),
                 "chunks": chunks,
             })
 
@@ -88,6 +95,9 @@ class ConceptInspector(BaseConceptInspector):
             "domain": concept_result["domain"],
             "description": concept_result["description"],
             "source_articles": concept_result.get("source_articles", []),
+            "run_id": concept_result.get("run_id"),
+            "version": concept_result.get("version"),
+            "is_active": concept_result.get("is_active"),
             "keywords": concept_result.get("keywords", []),
             "keyword_traces": keyword_traces,
             "cross_relations": rels_result,

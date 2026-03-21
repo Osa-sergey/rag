@@ -7,6 +7,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from rich.tree import Tree as RichTree
 from rich.text import Text
+from rich.panel import Panel
 
 
 def _build_tree(
@@ -25,23 +26,27 @@ def _build_tree(
     text = node.get("text", "")
 
     if level == 0:
-        icon, type_label, style = "📄", "ТЕКСТ", "green"
+        icon, type_label, style = "📄", "Исходный текст", "green"
     else:
-        icon, type_label, style = "📝", "САММАРИ", "yellow"
+        icon, type_label, style = "📝", f"Саммари (Level {level})", "yellow"
 
     label = Text()
-    label.append(f"{icon} ", style="bold")
-    label.append(f"Level {level}", style=f"bold {style}")
-    label.append(f" | {type_label}", style=style)
-    label.append(f"  {node_id}", style="dim")
+    label.append(f"{icon} ", "bold")
+    label.append(type_label, f"bold {style}")
+    label.append(f"  {node_id}", "dim")
 
     branch = tree.add(label)
 
+    # Show text in a Panel block (like inspect-graph --word does)
     if show_full_text:
-        snippet = Text(text.strip(), style="dim")
+        panel_text = text.strip()
     else:
-        snippet = Text(text[:100].replace("\n", " ").strip() + "…", style="dim")
-    branch.add(snippet)
+        panel_text = text[:150].replace("\n", " ").strip()
+        if len(text) > 150:
+            panel_text += "…"
+
+    panel_title = f"{icon} {type_label}" if level == 0 else f"{icon} Сгенерировано (L{level})"
+    branch.add(Panel(panel_text, title=panel_title, border_style=style, width=90, padding=(0, 1)))
 
     for child_id in node.get("children_ids", []):
         _build_tree(branch, nodes, child_id, show_full_text)

@@ -454,30 +454,121 @@ def inspect_concept(concept_id, override):
         click.echo(f"❌ {result['error']}")
         return
 
+    from rich.tree import Tree as RichTree
+    from rich.text import Text
+    from rich.panel import Panel
+
     console = get_console()
-    console.rule(f"[bold]Concept: {result['canonical_name']} ({result['domain']})")
-    click.echo(f"  ID: {result['concept_id']}")
-    click.echo(f"  Description: {result['description']}")
-    click.echo(f"  Articles: {result['source_articles']}")
-    click.echo(f"  Keywords: {result['keywords']}")
 
-    click.echo(f"\n  Keyword traces:")
-    for trace in result.get("keyword_traces", []):
-        click.echo(f"\n    🔑 {trace['word']} (article: {trace['article_id']})")
-        for chunk in trace.get("chunks", []):
-            click.echo(f"       L{chunk['level']} [{chunk['chunk_id']}]: {chunk['text']}")
+    # ── Root: Concept ──
+    version = result.get("version") or 1
+    is_active = result.get("is_active", True)
+    active_badge = "✓ active" if is_active else "inactive"
+    domain = result.get("domain", "?")
 
-    click.echo(f"\n  Cross-relations ({len(result.get('cross_relations', []))}):")
-    for rel in result.get("cross_relations", []):
-        click.echo(
-            f"    ↔ {rel.get('other_name')} ({rel.get('other_domain')}) "
-            f"— {rel.get('predicate')} ({rel.get('confidence', 0):.2f})"
+    concept_tree = RichTree(
+        Text.assemble(
+            ("💡 ", "bold"),
+            (result["canonical_name"], "bold cyan"),
+            (f"  ({domain})", "bold magenta"),
+            (f"  v{version} [{active_badge}]", "dim"),
+        ),
+        guide_style="bold bright_blue",
+    )
+
+    # Concept metadata
+    concept_tree.add(f"[dim]ID:[/dim] {result['concept_id']}")
+    concept_tree.add(f"[dim]Domain:[/dim] [magenta]{domain}[/magenta]")
+    if result.get("run_id"):
+        concept_tree.add(f"[dim]Run:[/dim] {result['run_id']}")
+    concept_tree.add(f"[dim]Articles:[/dim] {', '.join(result.get('source_articles', []))}")
+    concept_tree.add(f"[dim]Keywords:[/dim] {', '.join(result.get('keywords', []))}")
+
+    # Description in a Panel
+    desc = result.get("description", "")
+    if desc:
+        concept_tree.add(Panel(desc, title="📝 Описание концепта", border_style="cyan", width=90))
+
+    # ── Keywords grouped by word, then by article ──
+    traces = result.get("keyword_traces", [])
+    if traces:
+        # Group traces by word
+        from collections import defaultdict
+        word_traces: dict[str, list] = defaultdict(list)
+        for trace in traces:
+            word_traces[trace["word"]].append(trace)
+
+        kw_branch = concept_tree.add(
+            f"[bold]🔑 Keywords[/bold] [dim]({len(word_traces)} unique, {len(traces)} traces)[/dim]"
         )
-        desc = rel.get("description", "")
-        if desc:
-            click.echo(f"      {desc}")
 
-    click.echo()
+        for word, article_traces in word_traces.items():
+            word_branch = kw_branch.add(f"[bold cyan]{word}[/bold cyan]")
+
+            for trace in article_traces:
+                aid = trace.get("article_id", "?")
+                aname = trace.get("article_name", "")
+                conf = trace.get("confidence")
+                conf_str = f" conf={conf:.2f}" if conf is not None else ""
+                name_str = f" ({aname})" if aname else ""
+
+                art_branch = word_branch.add(
+                    f"[dim]📰[/dim] [cyan]{aid}[/cyan]{name_str} [dim]{conf_str}[/dim]"
+                )
+
+                # Keyword description for this article
+                kw_desc = trace.get("description")
+                if kw_desc:
+                    art_branch.add(Panel(
+                        kw_desc, title="📝 Описание keyword",
+                        border_style="dim", width=85,
+                    ))
+
+                # Source chunks
+                chunks = trace.get("chunks", [])
+                if chunks:
+                    for chunk in chunks:
+                        level = chunk.get("level", 0)
+                        chunk_id = chunk.get("chunk_id", "?")
+                        chunk_text = chunk.get("text", "")
+
+                        if level == 0:
+                            c_icon, c_label, c_style = "📄", "Исходный текст", "green"
+                        else:
+                            c_icon, c_label, c_style = "📝", f"Сгенерировано (L{level})", "yellow"
+
+                        art_branch.add(Panel(
+                            chunk_text,
+                            title=f"{c_icon} {c_label}  [dim]{chunk_id}[/dim]",
+                            border_style=c_style, width=85,
+                        ))
+
+    # ── Cross-relations ──
+    rels = result.get("cross_relations", [])
+    if rels:
+        rels_branch = concept_tree.add(
+            f"[bold]🔀 Cross-Relations[/bold] [dim]({len(rels)})[/dim]"
+        )
+        for rel in rels:
+            other = rel.get("other_name", "?")
+            other_domain = rel.get("other_domain", "?")
+            predicate = rel.get("predicate", "?")
+            conf = rel.get("confidence", 0)
+
+            rel_branch = rels_branch.add(
+                Text.assemble(
+                    ("↔ ", ""),
+                    (other, "cyan"),
+                    (f" ({other_domain})", "magenta"),
+                    (f"  {predicate}", "yellow"),
+                    (f"  conf={conf:.2f}", "dim"),
+                )
+            )
+            rel_desc = rel.get("description", "")
+            if rel_desc:
+                rel_branch.add(Panel(rel_desc, border_style="dim", width=80))
+
+    console.print(concept_tree)
     container.graph_store().close()
 
 
@@ -508,12 +599,40 @@ def trace_keyword(word, article_id, override):
         click.echo(f"❌ Keyword '{word}' не найден в статье '{article_id}'")
         return
 
-    click.echo(f"\n  🔑 '{word}' в статье '{article_id}' — {len(chunks)} чанков:\n")
-    for chunk in chunks:
-        click.echo(f"  Level {chunk['level']} [{chunk['chunk_id']}]:")
-        click.echo(f"    {chunk['text']}")
-        click.echo()
+    from rich.tree import Tree as RichTree
+    from rich.text import Text
+    from rich.panel import Panel
 
+    console = get_console()
+
+    kw_tree = RichTree(
+        Text.assemble(
+            ("🔑 ", "bold"),
+            (word, "bold cyan"),
+            (f"  в статье ", ""),
+            (article_id, "cyan"),
+            (f"  — {len(chunks)} чанков", "dim"),
+        ),
+        guide_style="bold bright_blue",
+    )
+
+    for chunk in chunks:
+        level = chunk.get("level", 0)
+        chunk_id = chunk.get("chunk_id", "?")
+        chunk_text = chunk.get("text", "")
+
+        if level == 0:
+            c_icon, c_label, c_style = "📄", "Исходный текст", "green"
+        else:
+            c_icon, c_label, c_style = "📝", f"Сгенерировано (L{level})", "yellow"
+
+        kw_tree.add(Panel(
+            chunk_text,
+            title=f"{c_icon} {c_label}  [dim]{chunk_id}[/dim]",
+            border_style=c_style, width=90,
+        ))
+
+    console.print(kw_tree)
     container.graph_store().close()
 
 
