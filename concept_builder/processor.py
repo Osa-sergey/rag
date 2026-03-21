@@ -231,30 +231,24 @@ class CrossArticleProcessor:
         for kc, emb in zip(all_contexts, embeddings):
             kc.embedding = emb
 
-        # ── Step 3.5: Deduplicate by word across articles ─────
-        # Same word from different articles → merge into one context
-        # keeping all article_ids so concepts get all source articles
-        dedup: dict[str, KeywordContext] = {}
+        # ── Step 3.5: Deduplicate by (word, article) ────────────
+        # Same word from the SAME article → merge (true duplicates).
+        # Same word from DIFFERENT articles → keep both (different meanings).
+        dedup: dict[tuple[str, str], KeywordContext] = {}
         for kc in all_contexts:
-            key = kc.word.lower()
+            key = (kc.word.lower(), kc.article_id)
             if key not in dedup:
                 dedup[key] = kc
-                if not hasattr(kc, "extra_article_ids"):
-                    kc.extra_article_ids = []
             else:
                 existing = dedup[key]
-                if not hasattr(existing, "extra_article_ids"):
-                    existing.extra_article_ids = []
-                if kc.article_id not in existing.extra_article_ids and kc.article_id != existing.article_id:
-                    existing.extra_article_ids.append(kc.article_id)
-                # Keep the best confidence
+                # Keep the best confidence for true duplicates
                 if kc.confidence > existing.confidence:
                     existing.confidence = kc.confidence
 
         dedup_contexts = list(dedup.values())
         if len(dedup_contexts) < len(all_contexts):
             logger.info(
-                "  Deduplicated %d → %d keywords (merged same words across articles)",
+                "  Deduplicated %d → %d keywords (merged same word+article duplicates)",
                 len(all_contexts), len(dedup_contexts),
             )
 
@@ -366,6 +360,32 @@ class CrossArticleProcessor:
         concept_embeddings = self._embedder.embed_texts(concept_descriptions)
         for c, emb in zip(concepts, concept_embeddings):
             c.embedding = emb
+
+        # Compute similarity between keyword descriptions and concept descriptions
+        import numpy as np
+        for idx, (cluster, concept) in enumerate(zip(clusters, concepts)):
+            if not concept.embedding:
+                continue
+            c_emb = np.array(concept.embedding)
+            c_norm = np.linalg.norm(c_emb)
+            if c_norm == 0:
+                continue
+            for kc in cluster:
+                if kc.embedding:
+                    k_emb = np.array(kc.embedding)
+                    k_norm = np.linalg.norm(k_emb)
+                    if k_norm > 0:
+                        sim = float(np.dot(c_emb, k_emb) / (c_norm * k_norm))
+                    else:
+                        sim = 0.0
+                else:
+                    sim = 0.0
+                # Update similarity in keyword_article_map
+                entries = concept.keyword_article_map.get(kc.word, [])
+                concept.keyword_article_map[kc.word] = [
+                    (aid, sim) if aid == kc.article_id else (aid, old_sim)
+                    for aid, old_sim in entries
+                ]
 
         # Compute relation embeddings
         if relations:
@@ -506,11 +526,11 @@ class CrossArticleProcessor:
         # Collect metadata
         all_words = list({kc.word for kc in cluster})
         all_articles_set: set[str] = set()
+        # Build keyword → article map (no extra_article_ids needed since dedup is per-article)
+        kw_article_map: dict[str, list[tuple[str, float]]] = {}
         for kc in cluster:
             all_articles_set.add(kc.article_id)
-            # Also collect extra article_ids from deduplication step
-            for extra in getattr(kc, "extra_article_ids", []):
-                all_articles_set.add(extra)
+            kw_article_map.setdefault(kc.word, []).append((kc.article_id, 0.0))
         all_articles = list(all_articles_set)
         all_versions = {}
         for kc in cluster:
@@ -603,6 +623,7 @@ class CrossArticleProcessor:
             source_articles=all_articles,
             source_versions=all_versions,
             keyword_words=all_words,
+            keyword_article_map=kw_article_map,
         )
 
     def _store_concepts(self, concepts: list[ConceptNode]) -> None:
@@ -668,18 +689,23 @@ class CrossArticleProcessor:
                 )
 
     def _store_instance_of_edges(self, concepts: list[ConceptNode]) -> None:
-        """Create INSTANCE_OF edges from Keywords to Concepts."""
+        """Create INSTANCE_OF edges from Keywords to Concepts with per-article similarity."""
         with self._gs._driver.session(database=self._gs._database) as session:
             for c in concepts:
                 for word in c.keyword_words:
+                    # Build article_id → similarity map for this word
+                    entries = c.keyword_article_map.get(word, [])
+                    article_sim_map = {aid: round(sim, 4) for aid, sim in entries}
                     session.run(
                         """
                         MATCH (k:Keyword {word: $word})
                         MATCH (c:Concept {id: $concept_id})
-                        MERGE (k)-[:INSTANCE_OF]->(c)
+                        MERGE (k)-[r:INSTANCE_OF]->(c)
+                        SET r.article_similarities = $article_sim_map
                         """,
                         word=word,
                         concept_id=c.id,
+                        article_sim_map=json.dumps(article_sim_map),
                     )
 
     def _store_concept_embeddings(
@@ -1294,16 +1320,22 @@ class CrossArticleProcessor:
 
     def _store_instance_of_for_words(
         self, words: list[str], concept_id: str,
+        keyword_article_map: dict[str, list[tuple[str, float]]] | None = None,
     ) -> None:
         """Create INSTANCE_OF edges from specific Keyword words to a Concept."""
+        keyword_article_map = keyword_article_map or {}
         with self._gs._driver.session(database=self._gs._database) as session:
             for word in words:
+                entries = keyword_article_map.get(word, [])
+                article_sim_map = {aid: round(sim, 4) for aid, sim in entries}
                 session.run(
                     """
                     MATCH (k:Keyword {word: $word})
                     MATCH (c:Concept {id: $concept_id})
-                    MERGE (k)-[:INSTANCE_OF]->(c)
+                    MERGE (k)-[r:INSTANCE_OF]->(c)
+                    SET r.article_similarities = $article_sim_map
                     """,
                     word=word,
                     concept_id=concept_id,
+                    article_sim_map=json.dumps(article_sim_map),
                 )

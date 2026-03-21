@@ -62,6 +62,8 @@ class ConceptNode:
     source_articles: list[str] = field(default_factory=list)
     source_versions: dict[str, str] = field(default_factory=dict)
     keyword_words: list[str] = field(default_factory=list)
+    keyword_article_map: dict[str, list[tuple[str, float]]] = field(default_factory=dict)
+    # {word: [(article_id, similarity_to_concept), ...]}
     version: int = 1
     is_active: bool = True
     previous_version_id: str | None = None
