@@ -22,7 +22,7 @@ encode_kwargs:
 # Размер батча для эмбеддингов.
 # На MPS (Apple Silicon) рекомендуется 32.
 # Уменьшите до 16 при OOM на больших статьях.
-embed_batch_size: 32
+embed_batch_size: 8
 
 # Размерность выходного вектора.
 # ВАЖНО: должна совпадать с vector_size в конфиге Qdrant!

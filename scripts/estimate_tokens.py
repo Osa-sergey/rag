@@ -193,8 +193,8 @@ def main():
     all_files = sorted(input_dir.glob("*.yaml"))
     logger.info("Found %d YAML files in %s", len(all_files), input_dir)
 
-    # Sample 100 random files (or all if < 100)
-    sample_size = min(100, len(all_files))
+    # Sample 100 random files (or all if < 25)
+    sample_size = min(25, len(all_files))
     sample_files = random.sample(all_files, sample_size)
     logger.info("Sampled %d files for estimation", sample_size)
 
