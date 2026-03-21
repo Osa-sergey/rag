@@ -305,8 +305,9 @@ def process(base_article, strategy, max_articles, article_ids, no_check_connecti
 @click.option("--article-id", "-a", default=None, help="Фильтр по article_id")
 @click.option("--show-relations", "-r", is_flag=True, help="Только concepts со связями + показать связи")
 @click.option("--full", "-f", is_flag=True, help="Полный текст описаний (без обрезки)")
+@click.option("--multi", "-m", is_flag=True, help="Только concepts с >1 keyword или >1 article, сортировка по кол-ву")
 @click.option("--override", "-o", multiple=True, help="Hydra override")
-def list_concepts(domain, article_id, show_relations, full, override):
+def list_concepts(domain, article_id, show_relations, full, multi, override):
     """Показать все Concept-ноды с их ID.
 
     \\b
@@ -372,6 +373,21 @@ def list_concepts(domain, article_id, show_relations, full, override):
             click.echo("Нет Concepts со связями.")
             return
 
+    if multi:
+        result = [
+            c for c in result
+            if len(c.get("keyword_words") or []) > 1
+            or len(c.get("source_articles") or []) > 1
+        ]
+        # Sort by total (keywords + articles) descending
+        result.sort(
+            key=lambda c: len(c.get("keyword_words") or []) + len(c.get("source_articles") or []),
+            reverse=True,
+        )
+        if not result:
+            click.echo("Нет Concepts с несколькими keywords/articles.")
+            return
+
     console = get_console()
     console.rule(f"[bold]Concepts ({len(result)})")
 
@@ -434,13 +450,15 @@ def list_concepts(domain, article_id, show_relations, full, override):
 
 @cli.command("inspect-concept")
 @click.option("--concept-id", "-c", required=True, help="UUID Concept-ноды")
+@click.option("--full-text", "-f", is_flag=True, default=False, help="Показать полный текст чанков")
 @click.option("--override", "-o", multiple=True, help="Hydra override")
-def inspect_concept(concept_id, override):
+def inspect_concept(concept_id, full_text, override):
     """Инспекция Concept с трейсингом до чанков.
 
     \\b
     Примеры:
       python -m concept_builder inspect-concept -c <uuid>
+      python -m concept_builder inspect-concept -c <uuid> --full-text
     """
     cfg = load_config(CONFIG_DIR, CONFIG_NAME, ConceptBuilderConfig, overrides=override)
 
@@ -448,7 +466,7 @@ def inspect_concept(concept_id, override):
     container = ConceptBuilderContainer(config=cfg)
     inspector = container.inspector()
 
-    result = inspector.inspect_concept(concept_id)
+    result = inspector.inspect_concept(concept_id, full_text=full_text)
 
     if "error" in result:
         click.echo(f"❌ {result['error']}")
@@ -492,14 +510,16 @@ def inspect_concept(concept_id, override):
     # ── Keywords grouped by word, then by article ──
     traces = result.get("keyword_traces", [])
     if traces:
-        # Group traces by word
         from collections import defaultdict
         word_traces: dict[str, list] = defaultdict(list)
         for trace in traces:
             word_traces[trace["word"]].append(trace)
 
+        in_count = sum(1 for t in traces if t.get("in_concept"))
+        out_count = len(traces) - in_count
         kw_branch = concept_tree.add(
-            f"[bold]🔑 Keywords[/bold] [dim]({len(word_traces)} unique, {len(traces)} traces)[/dim]"
+            f"[bold]🔑 Keywords[/bold] [dim]({len(word_traces)} unique, "
+            f"[green]{in_count} в концепте[/green], [red]{out_count} вне[/red])[/dim]"
         )
 
         for word, article_traces in word_traces.items():
@@ -508,13 +528,27 @@ def inspect_concept(concept_id, override):
             for trace in article_traces:
                 aid = trace.get("article_id", "?")
                 aname = trace.get("article_name", "")
+                in_concept = trace.get("in_concept", False)
+                sim = trace.get("similarity")
                 conf = trace.get("confidence")
-                conf_str = f" conf={conf:.2f}" if conf is not None else ""
+
+                # Two labeled scores
+                scores = []
+                if sim is not None:
+                    scores.append(f"sim={sim:.3f}")
+                if conf is not None:
+                    scores.append(f"conf={conf:.2f}")
+                scores_str = "  ".join(scores)
+
                 name_str = f" ({aname})" if aname else ""
 
-                art_branch = word_branch.add(
-                    f"[dim]📰[/dim] [cyan]{aid}[/cyan]{name_str} [dim]{conf_str}[/dim]"
-                )
+                # Green border for in-concept articles, red for out
+                if in_concept:
+                    art_label = f"[green]📰 {aid}{name_str}[/green] [dim]{scores_str}[/dim]"
+                else:
+                    art_label = f"[red]📰 {aid}{name_str}[/red] [dim]{scores_str}[/dim]"
+
+                art_branch = word_branch.add(art_label)
 
                 # Keyword description for this article
                 kw_desc = trace.get("description")
@@ -524,7 +558,7 @@ def inspect_concept(concept_id, override):
                         border_style="dim", width=85,
                     ))
 
-                # Source chunks
+                # Source chunks (standard color scheme)
                 chunks = trace.get("chunks", [])
                 if chunks:
                     for chunk in chunks:
