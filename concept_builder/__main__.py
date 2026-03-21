@@ -18,7 +18,7 @@ from pathlib import Path
 import click
 
 from cli_base import add_common_commands, load_config
-from cli_base.logging import setup_logging
+from cli_base.logging import setup_logging, get_console
 from concept_builder.schemas import ConceptBuilderConfig
 
 # Force UTF-8 for Windows console
@@ -90,9 +90,8 @@ def dry_run(base_article, strategy, max_articles, article_ids, no_check_connecti
     report = processor.dry_run(selected)
 
     # Print report
-    click.echo(f"\n{'═' * 60}")
-    click.echo(f"  DRY RUN — {len(report.articles)} статей")
-    click.echo(f"{'═' * 60}\n")
+    console = get_console()
+    console.rule(f"[bold]DRY RUN — {len(report.articles)} статей[/bold]")
 
     for aid in report.articles:
         name = report.article_names.get(aid, aid)
@@ -183,29 +182,32 @@ def dry_run(base_article, strategy, max_articles, article_ids, no_check_connecti
                 upper_sims.append((sim_matrix[i, j], kws_dedup[i].word, kws_dedup[j].word))
         sims = np.array([s[0] for s in upper_sims])
 
-        click.echo(f"\n{'═' * 70}")
-        click.echo(f"  Анализ similarity — {len(kws_dedup)} keywords, {len(sims)} пар")
-        click.echo(f"{'═' * 70}")
+        from rich.table import Table as RTable
+        console.rule(f"[bold]Анализ similarity — {len(kws_dedup)} keywords, {len(sims)} пар")
 
-        click.echo(f"\n  📊 Распределение cosine similarity:")
         percentiles = [5, 10, 25, 50, 75, 90, 95, 99]
-        click.echo(f"    {'Перцентиль':<15} {'Значение':<10}")
-        click.echo(f"    {'─' * 25}")
+        dist_table = RTable(title="📊 Распределение cosine similarity", show_lines=False)
+        dist_table.add_column("Перцентиль", width=15)
+        dist_table.add_column("Значение", justify="right", width=10)
         for p in percentiles:
             val = np.percentile(sims, p)
-            click.echo(f"    P{p:<14} {val:.4f}")
-        click.echo(f"    {'─' * 25}")
-        click.echo(f"    {'min':<15} {sims.min():.4f}")
-        click.echo(f"    {'max':<15} {sims.max():.4f}")
-        click.echo(f"    {'mean':<15} {sims.mean():.4f}")
-        click.echo(f"    {'std':<15} {sims.std():.4f}")
+            dist_table.add_row(f"P{p}", f"{val:.4f}")
+        dist_table.add_section()
+        dist_table.add_row("min", f"{sims.min():.4f}")
+        dist_table.add_row("max", f"{sims.max():.4f}")
+        dist_table.add_row("mean", f"{sims.mean():.4f}")
+        dist_table.add_row("std", f"{sims.std():.4f}")
+        console.print(dist_table)
 
         from concept_builder.concept_clusterer import GreedyConceptClusterer
         greedy = GreedyConceptClusterer()
 
-        click.echo(f"\n  📋 Порог → количество кластеров (greedy):")
-        click.echo(f"    {'Threshold':<12} {'Кластеры':<12} {'Avg size':<12} {'Max size':<12} {'Singletons':<12}")
-        click.echo(f"    {'─' * 60}")
+        thr_table = RTable(title="📋 Порог → количество кластеров (greedy)", show_lines=False)
+        thr_table.add_column("Threshold", width=12)
+        thr_table.add_column("Кластеры", justify="right", width=10)
+        thr_table.add_column("Avg size", justify="right", width=10)
+        thr_table.add_column("Max size", justify="right", width=10)
+        thr_table.add_column("Singletons", justify="right", width=12)
         current_t = cfg.similarity_threshold
         thresholds = [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95]
         for t in thresholds:
@@ -215,7 +217,9 @@ def dry_run(base_article, strategy, max_articles, article_ids, no_check_connecti
             avg_size = sum(sizes) / len(sizes) if sizes else 0
             max_size = max(sizes) if sizes else 0
             marker = " ◀" if abs(t - current_t) < 0.01 else ""
-            click.echo(f"    {t:<12.2f} {len(clusters):<12} {avg_size:<12.1f} {max_size:<12} {singletons:<12}{marker}")
+            style = "bold green" if abs(t - current_t) < 0.01 else ""
+            thr_table.add_row(f"{t:.2f}{marker}", str(len(clusters)), f"{avg_size:.1f}", str(max_size), str(singletons), style=style)
+        console.print(thr_table)
 
         click.echo(f"\n  🔗 Топ-10 наиболее похожих пар:")
         sorted_sims = sorted(upper_sims, key=lambda x: x[0], reverse=True)[:10]
@@ -277,9 +281,8 @@ def process(base_article, strategy, max_articles, article_ids, no_check_connecti
     click.echo(f"\n🚀 Processing {len(selected)} articles...")
     result = processor.process(selected)
 
-    click.echo(f"\n{'═' * 60}")
-    click.echo(f"  РЕЗУЛЬТАТ")
-    click.echo(f"{'═' * 60}")
+    console = get_console()
+    console.rule("[bold]РЕЗУЛЬТАТ")
     click.echo(f"  Concepts: {result['concepts_created']}")
     click.echo(f"  Relations: {result['relations_created']}")
 
@@ -369,9 +372,8 @@ def list_concepts(domain, article_id, show_relations, full, override):
             click.echo("Нет Concepts со связями.")
             return
 
-    click.echo(f"\n{'═' * 70}")
-    click.echo(f"  Concepts ({len(result)})")
-    click.echo(f"{'═' * 70}\n")
+    console = get_console()
+    console.rule(f"[bold]Concepts ({len(result)})")
 
     for c in result:
         name = c.get("name", "?")
@@ -415,7 +417,7 @@ def list_concepts(domain, article_id, show_relations, full, override):
             click.echo(f"     description: {desc}")
         click.echo()
 
-    click.echo(f"{'═' * 70}")
+    console.rule()
     click.echo(f"  Всего: {len(result)} concepts")
 
     # Show unique domains
@@ -452,9 +454,8 @@ def inspect_concept(concept_id, override):
         click.echo(f"❌ {result['error']}")
         return
 
-    click.echo(f"\n{'═' * 60}")
-    click.echo(f"  Concept: {result['canonical_name']} ({result['domain']})")
-    click.echo(f"{'═' * 60}")
+    console = get_console()
+    console.rule(f"[bold]Concept: {result['canonical_name']} ({result['domain']})")
     click.echo(f"  ID: {result['concept_id']}")
     click.echo(f"  Description: {result['description']}")
     click.echo(f"  Articles: {result['source_articles']}")
@@ -554,21 +555,22 @@ def list_runs(override):
         click.echo("Нет запусков с run_id.")
         return
 
-    click.echo(f"\n{'═' * 70}")
-    click.echo(f"  Запуски concept_builder ({len(result)})")
-    click.echo(f"{'═' * 70}\n")
-
-    click.echo(f"  {'Run ID':<20} {'Concepts':<12} {'Domains':<30} {'Created':<25}")
-    click.echo(f"  {'─' * 85}")
+    console = get_console()
+    from rich.table import Table as RTable
+    runs_table = RTable(title=f"Запуски concept_builder ({len(result)})", show_lines=False)
+    runs_table.add_column("Run ID", width=20)
+    runs_table.add_column("Concepts", justify="right", width=10)
+    runs_table.add_column("Domains", width=30)
+    runs_table.add_column("Created", width=25)
 
     for r in result:
         run_id = r.get("run_id", "?")
         count = r.get("concepts", 0)
         domains = ", ".join(r.get("domains") or [])
         created = r.get("created_at", "?")
-        click.echo(f"  {run_id:<20} {count:<12} {domains:<30} {created:<25}")
+        runs_table.add_row(str(run_id), str(count), domains, str(created))
 
-    click.echo()
+    console.print(runs_table)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -716,9 +718,8 @@ def add_concept(name, description, domain, article_ids, high_threshold, low_thre
     gs = container.graph_store()
 
     # Embed the concept description
-    click.echo(f"\n{'═' * 70}")
-    click.echo(f"  Adding concept: {name} ({domain})")
-    click.echo(f"{'═' * 70}")
+    console = get_console()
+    console.rule(f"[bold]Adding concept: {name} ({domain})")
     click.echo(f"  Description: {description}")
     click.echo(f"  Thresholds: high={high_threshold}, low={low_threshold}")
 
@@ -797,18 +798,14 @@ def add_concept(name, description, domain, article_ids, high_threshold, low_thre
     candidates.sort(key=lambda x: x[1], reverse=True)
 
     # ── Display results ──
-    click.echo(f"\n{'─' * 70}")
-    click.echo(f"  ✅ Direct matches ({len(direct_matches)}, cosine ≥ {high_threshold}):")
-    click.echo(f"{'─' * 70}")
+    console.rule(f"[bold green]✅ Direct matches ({len(direct_matches)}, cosine ≥ {high_threshold})")
     for kc, sim in direct_matches:
         click.echo(f"    [{sim:.3f}] {kc.word} ({kc.category}) art={kc.article_id}")
         if kc.description:
             desc = kc.description[:100].replace("\n", " ")
             click.echo(f"      {desc}")
 
-    click.echo(f"\n{'─' * 70}")
-    click.echo(f"  🔍 Candidates ({len(candidates)}, {low_threshold} ≤ cosine < {high_threshold}):")
-    click.echo(f"{'─' * 70}")
+    console.rule(f"[bold yellow]🔍 Candidates ({len(candidates)}, {low_threshold} ≤ cosine < {high_threshold})")
     for kc, sim in candidates[:20]:
         click.echo(f"    [{sim:.3f}] {kc.word} ({kc.category}) art={kc.article_id}")
 
@@ -924,7 +921,7 @@ def add_concept(name, description, domain, article_ids, high_threshold, low_thre
     except Exception as exc:
         click.echo(f"  ⚠️  Qdrant storage failed: {exc}")
 
-    click.echo(f"\n{'═' * 70}")
+    console.rule("[bold]Summary")
     click.echo(f"  Summary:")
     click.echo(f"    Name: {concept.canonical_name}")
     click.echo(f"    Domain: {concept.domain}")
@@ -999,14 +996,11 @@ def expand_cmd(concept_ids, article_ids, high_threshold, low_threshold, override
         return
 
     # ── Phase 5: Show results and get user choice ─────────
-    click.echo(f"\n{'═' * 70}")
-    click.echo(f"  EXPAND — выбор версий")
-    click.echo(f"{'═' * 70}")
+    console = get_console()
+    console.rule("[bold]EXPAND — выбор версий")
 
     for r in results:
-        click.echo(f"\n{'═' * 70}")
-        click.echo(f"  Concept: {r.concept_name} ({r.domain})")
-        click.echo(f"{'═' * 70}")
+        console.rule(f"[bold]Concept: {r.concept_name} ({r.domain})")
 
         # v1 — original
         click.echo(f"\n  v{r.original_version} (текущая):")
@@ -1049,7 +1043,7 @@ def expand_cmd(concept_ids, article_ids, high_threshold, low_threshold, override
             click.echo(f"  ❌ Допустимые: {choices}")
 
     # ── Finalize ──────────────────────────────────────────
-    click.echo(f"\n{'═' * 70}")
+    console.rule()
     click.echo("  Сохранение выбранных версий...")
 
     summary = processor.finalize_expand(results)
@@ -1111,9 +1105,8 @@ def expand_dry_run(concept_ids, article_ids, high_threshold, low_threshold, over
     need_emb = len(all_kws)  # all need embeddings for matching
     concepts_no_emb = sum(1 for c in concepts if c.embedding is None)
 
-    click.echo(f"\n{'═' * 70}")
-    click.echo(f"  EXPAND DRY RUN — {len(concepts)} concepts × {len(a_ids)} articles")
-    click.echo(f"{'═' * 70}\n")
+    console = get_console()
+    console.rule(f"[bold]EXPAND DRY RUN — {len(concepts)} concepts × {len(a_ids)} articles")
 
     click.echo(f"  Существующие Concepts:")
     for c in concepts:

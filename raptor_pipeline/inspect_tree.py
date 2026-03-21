@@ -5,48 +5,59 @@ import hydra
 from omegaconf import DictConfig
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
+from rich.tree import Tree as RichTree
+from rich.text import Text
 
-def print_tree(nodes: dict, node_id: str, indent: str = "", is_last: bool = True, show_full_text: bool = False):
-    """Recursively print the tree structure."""
+
+def _build_tree(
+    tree: RichTree,
+    nodes: dict,
+    node_id: str,
+    show_full_text: bool = False,
+):
+    """Recursively add nodes to a Rich Tree."""
     if node_id not in nodes:
-        print(f"{indent}└── [MISSING] {node_id}")
+        tree.add(Text(f"[MISSING] {node_id}", style="bold red"))
         return
 
     node = nodes[node_id]
     level = node.get("level", 0)
     text = node.get("text", "")
-    
-    if show_full_text:
-        # Format full text with proper indentation
-        lines = text.strip().split("\n")
-        text_display = "\n".join([(indent + ("    " if is_last else "│   ") + "    " + line) for line in lines])
-        text_snippet = f"\n{text_display}"
+
+    if level == 0:
+        icon, type_label, style = "📄", "ТЕКСТ", "green"
     else:
-        text_snippet = ": " + text[:100].replace("\n", " ").strip() + "..."
-    
-    marker = "└── " if is_last else "├── "
-    type_label = "📄 ТЕКСТ" if level == 0 else "📝 САММАРИ"
-    print(f"{indent}{marker}[Level {level} | {type_label}] ID: {node_id}")
+        icon, type_label, style = "📝", "САММАРИ", "yellow"
+
+    label = Text()
+    label.append(f"{icon} ", style="bold")
+    label.append(f"Level {level}", style=f"bold {style}")
+    label.append(f" | {type_label}", style=style)
+    label.append(f"  {node_id}", style="dim")
+
+    branch = tree.add(label)
+
     if show_full_text:
-        print(f"{indent}{'    ' if is_last else '│   '}Text:{text_snippet}")
+        snippet = Text(text.strip(), style="dim")
     else:
-        print(f"{indent}{'    ' if is_last else '│   '}{text_snippet}")
-    
-    new_indent = indent + ("    " if is_last else "│   ")
-    children = node.get("children_ids", [])
-    
-    for i, child_id in enumerate(children):
-        print_tree(nodes, child_id, new_indent, i == len(children) - 1, show_full_text)
+        snippet = Text(text[:100].replace("\n", " ").strip() + "…", style="dim")
+    branch.add(snippet)
+
+    for child_id in node.get("children_ids", []):
+        _build_tree(branch, nodes, child_id, show_full_text)
 
 def main(cfg: DictConfig) -> None:
     """Core inspect-tree logic, callable from Click or standalone."""
+    from cli_base.logging import get_console
+    console = get_console()
+
     client = QdrantClient(
         host=cfg.stores.qdrant.get("host", "localhost"),
         port=cfg.stores.qdrant.get("port", 6333),
     )
     collection = cfg.stores.qdrant.get("collection_name", "raptor_chunks")
     
-    print(f"Fetching nodes from collection '{collection}'...")
+    console.print(f"Fetching nodes from collection [cyan]{collection}[/cyan]...")
     
     article_id = cfg.get("article_id", None)
     if article_id is not None:
@@ -54,7 +65,7 @@ def main(cfg: DictConfig) -> None:
     
     scroll_filter = None
     if article_id:
-        print(f"Filtering by article_id: {article_id}")
+        console.print(f"Filtering by article_id: [cyan]{article_id}[/cyan]")
         scroll_filter = models.Filter(
             must=[
                 models.FieldCondition(
@@ -74,7 +85,7 @@ def main(cfg: DictConfig) -> None:
     )
     
     if not points:
-        print("No points found in collection.")
+        console.print("[yellow]No points found in collection.[/yellow]")
         if article_id:
             # Debug: show what article_ids actually exist
             sample, _ = client.scroll(
@@ -84,7 +95,7 @@ def main(cfg: DictConfig) -> None:
                 limit=20,
             )
             existing_ids = {p.payload.get("article_id", "?") for p in sample}
-            print(f"  (existing article_ids sample: {existing_ids})")
+            console.print(f"  [dim](existing article_ids sample: {existing_ids})[/dim]")
         return
 
     # Map nodes by their node_id
@@ -95,10 +106,10 @@ def main(cfg: DictConfig) -> None:
             nodes_map[payload["node_id"]] = payload
         else:
             # Fallback for old records without node_id in payload (unlikely to work well)
-            print(f"Warning: Point {p.id} missing 'node_id' in payload.")
+            console.print(f"[yellow]Warning: Point {p.id} missing 'node_id' in payload.[/yellow]")
 
     if not nodes_map:
-        print("No nodes with 'node_id' found. Try running the pipeline again to update data.")
+        console.print("[yellow]No nodes with 'node_id' found. Try running the pipeline again to update data.[/yellow]")
         return
 
     # Find root nodes (nodes that are not children of any other node)
@@ -122,15 +133,18 @@ def main(cfg: DictConfig) -> None:
     roots.sort(key=lambda nid: -nodes_map[nid].get("level", 0))
 
     show_full_text = cfg.get("full_text", False)
-    
-    print(f"\nRAPTOR Tree Structure (Total nodes: {len(nodes_map)}):")
-    print("=" * 60)
-    for i, root_id in enumerate(roots):
-        print_tree(nodes_map, root_id, is_last=(i == len(roots) - 1), show_full_text=show_full_text)
-    print("=" * 60)
+
+    # Build and print Rich tree
+    tree = RichTree(
+        f"🌳 RAPTOR Tree  [dim]({len(nodes_map)} nodes)[/dim]",
+        guide_style="bold bright_blue",
+    )
+    for root_id in roots:
+        _build_tree(tree, nodes_map, root_id, show_full_text=show_full_text)
+    console.print(tree)
     
     if not show_full_text:
-        print("\nTip: Use 'full_text=true' (or '+full_text=true' if not in config) to see complete content.")
+        console.print("\n[dim]Tip: Use 'full_text=true' to see complete content.[/dim]")
 
     # ── Show article summary from Neo4j ───────────────────────
     try:
@@ -157,11 +171,9 @@ def main(cfg: DictConfig) -> None:
                 record = result.single()
                 if record and record["summary"]:
                     name = record.get("name") or aid
-                    print(f"\n{'═' * 60}")
-                    print(f"📋 ОБЩЕЕ САММАРИ СТАТЬИ: {name}")
-                    print(f"{'═' * 60}")
-                    print(record["summary"])
-                    print(f"{'═' * 60}")
+                    from rich.panel import Panel
+                    from cli_base.logging import get_console
+                    get_console().print(Panel(record["summary"], title=f"📋 {name}", border_style="green"))
                 else:
                     print(f"\n(Саммари для '{aid}' не найдено в Neo4j)")
         

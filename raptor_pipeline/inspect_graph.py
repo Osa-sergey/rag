@@ -61,6 +61,14 @@ _fix_cyrillic_args()
 
 def main(cfg: DictConfig, article_id: str | None = None, min_confidence: float | None = None) -> None:
     """Core inspect-graph logic, callable from Click or standalone."""
+    from cli_base.logging import get_console
+    from rich.table import Table
+    from rich.tree import Tree as RichTree
+    from rich.panel import Panel
+    from rich.text import Text
+
+    console = get_console()
+
     # 1. Connect to Neo4j
     n_cfg = cfg.stores.neo4j
     driver = GraphDatabase.driver(n_cfg.uri, auth=(n_cfg.user, n_cfg.password))
@@ -79,8 +87,6 @@ def main(cfg: DictConfig, article_id: str | None = None, min_confidence: float |
             if filter_article:
                 # Mode A2: List keywords for a specific article (with confidence)
                 conf_label = f" (confidence ≥ {min_confidence})" if min_confidence else ""
-                print(f"\nKeywords for Article '{filter_article}'{conf_label}:")
-                print("=" * 60)
                 result = session.run(
                     """
                     MATCH (a:Article {id: $article_id})-[r:HAS_KEYWORD]->(k:Keyword)
@@ -99,57 +105,63 @@ def main(cfg: DictConfig, article_id: str | None = None, min_confidence: float |
                 else:
                     keywords = all_keywords
                 if not all_keywords:
-                    print(f"No keywords found for article '{filter_article}'.")
+                    console.print(f"[yellow]No keywords found for article '{filter_article}'.[/yellow]")
                     # Debug: check if article exists
                     art = session.run(
                         "MATCH (a:Article {id: $id}) RETURN a.id AS id, a.article_name AS name",
                         id=filter_article,
                     ).single()
                     if art:
-                        print(f"  Article exists: {art['id']} ({art.get('name', '?')})")
+                        console.print(f"  Article exists: {art['id']} ({art.get('name', '?')})")
                         raw_count = session.run(
                             "MATCH (a:Article {id: $id})-[r:HAS_KEYWORD]->(k) RETURN count(r) AS cnt",
                             id=filter_article,
                         ).single()
-                        print(f"  Total HAS_KEYWORD edges: {raw_count['cnt'] if raw_count else 0}")
+                        console.print(f"  Total HAS_KEYWORD edges: {raw_count['cnt'] if raw_count else 0}")
                     else:
-                        print(f"  Article '{filter_article}' NOT FOUND in Neo4j.")
+                        console.print(f"  [red]Article '{filter_article}' NOT FOUND in Neo4j.[/red]")
                         similar = session.run(
                             "MATCH (a:Article) WHERE a.id CONTAINS $partial OR a.article_name CONTAINS $partial "
                             "RETURN a.id AS id, a.article_name AS name LIMIT 5",
                             partial=filter_article,
                         ).data()
                         if similar:
-                            print(f"  Similar articles: {similar}")
+                            console.print(f"  Similar articles: {similar}")
                 elif not keywords:
-                    print(f"No keywords with confidence ≥ {min_confidence} (total: {len(all_keywords)})")
+                    console.print(f"[yellow]No keywords with confidence ≥ {min_confidence} (total: {len(all_keywords)})[/yellow]")
                 else:
+                    tbl = Table(title=f"Keywords for Article '{filter_article}'{conf_label}", show_lines=False)
+                    tbl.add_column("Keyword", style="bold cyan")
+                    tbl.add_column("Category", style="dim")
+                    tbl.add_column("Conf", justify="right", width=6)
+                    tbl.add_column("Chunks", justify="right", width=7)
+                    tbl.add_column("Merged from", style="dim", overflow="ellipsis")
                     for kw in keywords:
                         conf = kw.get('confidence')
-                        conf_str = f"  conf={conf:.2f}" if conf is not None else "  conf=NULL"
+                        conf_str = f"{conf:.2f}" if conf is not None else "NULL"
                         orig = kw.get('original_words') or []
-                        orig_str = f"  ← merged: [{', '.join(orig)}]" if orig else ""
                         chunks = kw.get('chunk_ids') or []
-                        chunks_str = f"  [{len(chunks)} chunks]" if chunks else ""
-                        print(f"- {kw['word']} ({kw['category']}){conf_str}{chunks_str}{orig_str}")
-                print("=" * 60)
-                shown = len(keywords)
-                total = len(all_keywords)
-                if min_confidence is not None and total != shown:
-                    print(f"Shown: {shown}/{total} keywords (confidence ≥ {min_confidence})")
-                else:
-                    print(f"Total: {total} keywords")
+                        tbl.add_row(
+                            kw['word'], kw['category'], conf_str,
+                            str(len(chunks)) if chunks else "—",
+                            ", ".join(orig) if orig else "",
+                        )
+                    console.print(tbl)
+                    shown = len(keywords)
+                    total = len(all_keywords)
+                    if min_confidence is not None and total != shown:
+                        console.print(f"  Shown: {shown}/{total} (confidence ≥ {min_confidence})")
+                    else:
+                        console.print(f"  Total: {total} keywords")
                 # Show confidence distribution
                 if all_keywords:
                     confs = [kw.get('confidence') or 0 for kw in all_keywords]
                     high = sum(1 for c in confs if c >= 0.8)
                     med = sum(1 for c in confs if 0.5 <= c < 0.8)
                     low = sum(1 for c in confs if c < 0.5)
-                    print(f"  Confidence: ≥0.8: {high}, 0.5-0.8: {med}, <0.5: {low}")
+                    console.print(f"  [dim]Confidence distribution: ≥0.8: {high}, 0.5–0.8: {med}, <0.5: {low}[/dim]")
             else:
                 # Mode A1: List all keywords globally
-                print("\nAvailable Keywords in Neo4j:")
-                print("=" * 60)
                 result = session.run(
                     """
                     MATCH (k:Keyword)
@@ -163,39 +175,50 @@ def main(cfg: DictConfig, article_id: str | None = None, min_confidence: float |
                 )
                 keywords = list(result)
                 if not keywords:
-                    print("No keywords found in Neo4j.")
-                for kw in keywords:
-                    conf = kw.get('max_confidence')
-                    conf_str = f"  conf={conf:.2f}" if conf is not None else ""
-                    art_count = kw.get('article_count', 0)
-                    art_str = f"  [{art_count} articles]" if art_count else ""
-                    orig = kw.get('original_words') or []
-                    orig_str = f"  ← merged: [{', '.join(orig)}]" if orig else ""
-                    print(f"- {kw['word']} ({kw['category']}){conf_str}{art_str}{orig_str}")
-                print("=" * 60)
-                print(f"Total: {len(keywords)} keywords")
-            print("\nTip: Run with '--word YOUR_KEYWORD' to see relationships and source text.")
-            print("     Use '--article-id ID' to filter by article.")
+                    console.print("[yellow]No keywords found in Neo4j.[/yellow]")
+                else:
+                    tbl = Table(title="Available Keywords in Neo4j", show_lines=False)
+                    tbl.add_column("Keyword", style="bold cyan")
+                    tbl.add_column("Category", style="dim")
+                    tbl.add_column("Max Conf", justify="right", width=9)
+                    tbl.add_column("Articles", justify="right", width=9)
+                    tbl.add_column("Merged from", style="dim", overflow="ellipsis")
+                    for kw in keywords:
+                        conf = kw.get('max_confidence')
+                        conf_str = f"{conf:.2f}" if conf is not None else ""
+                        art_count = kw.get('article_count', 0)
+                        orig = kw.get('original_words') or []
+                        tbl.add_row(
+                            kw['word'], kw['category'], conf_str,
+                            str(art_count) if art_count else "—",
+                            ", ".join(orig) if orig else "",
+                        )
+                    console.print(tbl)
+                    console.print(f"  Total: {len(keywords)} keywords")
+            console.print("\n[dim]Tip: Use '--word KEYWORD' to inspect relationships. Use '--article-id ID' to filter.[/dim]")
         
         else:
-            # Mode B: Inspect specific keyword
-            print(f"\nInspecting Keyword: '{keyword_to_inspect}'")
-            print("=" * 60)
-
-            # 0. Show keyword info + original_words
+            # ── Mode B: Inspect specific keyword ──
+            # 0. Show keyword info
             kw_info = session.run(
                 "MATCH (k:Keyword {word: $word}) RETURN k.category AS category, k.original_words AS original_words",
                 word=keyword_to_inspect,
             )
             kw_record = kw_info.single()
+
+            # Build a Rich tree rooted at the keyword
+            kw_tree = RichTree(
+                Text.assemble(
+                    ("🔑 ", "bold"),
+                    (keyword_to_inspect, "bold cyan"),
+                    (f"  ({kw_record['category']})" if kw_record else "", "dim"),
+                ),
+                guide_style="bold bright_blue",
+            )
             if kw_record:
-                print(f"Category: {kw_record['category']}")
                 orig = kw_record.get('original_words') or []
                 if orig:
-                    print(f"Merged from: {orig}")
-                else:
-                    print("Merged from: (not a merged keyword)")
-            print()
+                    kw_tree.add(Text(f"Merged from: {', '.join(orig)}", style="dim"))
 
             # 1. Relations — grouped by source chunk
             result = session.run(
@@ -211,9 +234,11 @@ def main(cfg: DictConfig, article_id: str | None = None, min_confidence: float |
             
             relations = list(result)
             if not relations:
-                print(f"No relations found for '{keyword_to_inspect}'.")
+                kw_tree.add(Text("No relations found", style="dim yellow"))
             else:
-                print(f"Found {len(relations)} relations:\n")
+                rels_branch = kw_tree.add(
+                    f"[bold]🔗 Relations[/bold] [dim]({len(relations)} total)[/dim]"
+                )
 
                 # Group relations by chunk_id
                 chunk_to_rels: dict[str, list[dict]] = {}
@@ -228,21 +253,25 @@ def main(cfg: DictConfig, article_id: str | None = None, min_confidence: float |
                 
                 processed_chunks = set()
                 for c_id, rels_in_chunk in chunk_to_rels.items():
-                    print(f"{'─' * 50}")
-                    print(f"📦 Source Chunk: {c_id}")
-                    print(f"{'─' * 50}")
+                    chunk_branch = rels_branch.add(f"[bold]📦 Chunk:[/bold] [cyan]{c_id}[/cyan]")
                     for rel in rels_in_chunk:
-                        print(f"  ({rel['subject']}) --[{rel['predicate']}]--> ({rel['object']})")
+                        chunk_branch.add(
+                            Text.assemble(
+                                (rel['subject'], "green"),
+                                (" ──[", ""),
+                                (rel['predicate'], "yellow"),
+                                ("]──▶ ", ""),
+                                (rel['object'], "green"),
+                            )
+                        )
                     
                     # Show chunk text once per group
                     if c_id and c_id != "(no chunk)" and c_id not in processed_chunks:
                         text = get_chunk_text(q_client, q_collection, c_id)
-                        indented_text = "\n".join(["    | " + line for line in text.split("\n")])
-                        print(f"\n  Source Text:\n{indented_text}")
+                        chunk_branch.add(Panel(text, title="Source Text", border_style="dim", width=90))
                         processed_chunks.add(c_id)
-                    print()
             
-            # 2. Articles mentioning this keyword via HAS_KEYWORD
+            # 2. Articles mentioning this keyword
             result = session.run(
                 """
                 MATCH (a:Article)-[r:HAS_KEYWORD]->(k:Keyword {word: $word})
@@ -253,7 +282,9 @@ def main(cfg: DictConfig, article_id: str | None = None, min_confidence: float |
             )
             articles = list(result)
             if articles:
-                print("\nArticles mentioning this keyword:")
+                arts_branch = kw_tree.add(
+                    f"[bold]📰 Articles[/bold] [dim]({len(articles)})[/dim]"
+                )
                 for art in articles:
                     c_ids = art.get('chunk_ids', []) or []
                     if isinstance(c_ids, str): c_ids = [c_ids]
@@ -261,9 +292,11 @@ def main(cfg: DictConfig, article_id: str | None = None, min_confidence: float |
                     conf_str = f" conf={conf:.2f}" if conf is not None else " conf=NULL"
                     name = art.get('article_name') or ''
                     name_str = f" ({name})" if name else ''
-                    print(f"- Article: {art['article_id']}{name_str}{conf_str} (Chunks: {', '.join(c_ids)})")
+                    arts_branch.add(
+                        f"[cyan]{art['article_id']}[/cyan]{name_str} [dim]{conf_str}  [{len(c_ids)} chunks][/dim]"
+                    )
 
-            # 3. Cross-article references (REFERENCES edges) involving this keyword/article
+            # 3. Cross-article references
             result = session.run(
                 """
                 MATCH (src:Article)-[r:REFERENCES]->(tgt:Article)
@@ -277,21 +310,27 @@ def main(cfg: DictConfig, article_id: str | None = None, min_confidence: float |
             )
             refs = list(result)
             if refs:
-                print(f"\nCross-article references involving '{keyword_to_inspect}':")
+                refs_branch = kw_tree.add(
+                    f"[bold]🔀 Cross-References[/bold] [dim]({len(refs)})[/dim]"
+                )
                 for ref in refs:
                     c_ids = ref.get('chunk_ids', []) or []
                     if isinstance(c_ids, str):
                         c_ids = [c_ids]
-                    chunk_str = f" (from chunks: {', '.join(c_ids)})" if c_ids else ""
                     section_str = f"#{ref['section']}" if ref.get('section') else ""
-                    print(f"  [{ref['source']}] → [{ref['target']}{section_str}]"
-                          f" display='{ref.get('display', '')}'{chunk_str}")
-                    # Show source text for link chunks
+                    ref_branch = refs_branch.add(
+                        Text.assemble(
+                            ("[", ""), (ref['source'], "cyan"), ("] → [", ""),
+                            (ref['target'], "green"), (section_str, "dim"), ("]", ""),
+                            (f"  display='{ref.get('display', '')}'", "dim"),
+                        )
+                    )
                     for c_id in c_ids:
                         if c_id:
                             text = get_chunk_text(q_client, q_collection, c_id)
-                            indented = "\n".join(["      | " + line for line in text.split("\n")])
-                            print(f"    Source chunk ({c_id}):\n{indented}")
+                            ref_branch.add(Panel(text, title=f"Chunk {c_id}", border_style="dim", width=80))
+
+            console.print(kw_tree)
 
     driver.close()
 

@@ -93,15 +93,13 @@ def search(query, top_k, no_rephrase, level, override):
         query, top_k=top_k, rephrase=not no_rephrase, level=level,
     )
 
-    # ── Display results ──
-    click.echo(f"\n{'═' * 70}")
-    click.echo(f"  Query: {result.query}")
-    click.echo(f"{'═' * 70}")
+    # ── Display results (Rich) ──
+    from cli_base.logging import get_console
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.text import Text
 
-    if result.rephrased_queries:
-        click.echo(f"\n  🔄 Rephrased queries:")
-        for i, rq in enumerate(result.rephrased_queries, 1):
-            click.echo(f"    Q{i}: {rq}")
+    console = get_console()
 
     # Query labels
     all_queries = [result.query] + result.rephrased_queries
@@ -109,104 +107,101 @@ def search(query, top_k, no_rephrase, level, override):
     for i, rq in enumerate(result.rephrased_queries, 1):
         q_labels[rq] = f"Q{i}"
 
-    # ── RAPTOR Chunks ──
-    click.echo(f"\n{'─' * 70}")
-    click.echo(f"  📄 RAPTOR Chunks ({len(result.chunks)} results)")
-    click.echo(f"{'─' * 70}")
+    console.rule(f"[bold]Query: {result.query}[/bold]")
 
+    if result.rephrased_queries:
+        console.print("\n[bold]🔄 Rephrased queries:[/bold]")
+        for i, rq in enumerate(result.rephrased_queries, 1):
+            console.print(f"  Q{i}: {rq}")
+
+    # ── RAPTOR Chunks ──
+    console.rule(f"[bold]📄 RAPTOR Chunks ({len(result.chunks)} results)")
     if not result.chunks:
-        click.echo("  (no results)")
+        console.print("  [dim](no results)[/dim]")
     else:
+        chunks_table = Table(show_lines=True, expand=True)
+        chunks_table.add_column("Score", width=7, justify="center")
+        chunks_table.add_column("Hits", width=5, justify="center")
+        chunks_table.add_column("Level", width=5, justify="center")
+        chunks_table.add_column("Article", style="cyan", width=12)
+        chunks_table.add_column("Keywords", style="dim", width=25, overflow="ellipsis")
+        chunks_table.add_column("Text", ratio=1)
+
         for c in result.chunks:
             text_preview = c.text[:200].replace("\n", " ")
             if len(c.text) > 200:
-                text_preview += "..."
-
-            click.echo(
-                f"\n  [{c.score:.3f}] hits={c.hit_count} "
-                f"level={c.level} article={c.article_id}"
+                text_preview += "…"
+            kw = ", ".join(c.keywords[:10]) if c.keywords else "—"
+            chunks_table.add_row(
+                f"{c.score:.3f}", str(c.hit_count), str(c.level),
+                str(c.article_id), kw, text_preview,
             )
-            click.echo(f"    node: {c.node_id}")
-            if c.keywords:
-                click.echo(f"    keywords: {', '.join(c.keywords[:10])}")
-            click.echo(f"    text: {text_preview}")
-            click.echo(f"    scores: {_format_scores(c.scores_by_query, q_labels)}")
+        console.print(chunks_table)
 
     # ── Concepts ──
-    click.echo(f"\n{'─' * 70}")
-    click.echo(f"  💡 Concepts ({len(result.concepts)} results)")
-    click.echo(f"{'─' * 70}")
-
+    console.rule(f"[bold]💡 Concepts ({len(result.concepts)} results)")
     if not result.concepts:
-        click.echo("  (no results)")
+        console.print("  [dim](no results)[/dim]")
     else:
         for c in result.concepts:
-            click.echo(
-                f"\n  [{c.score:.3f}] hits={c.hit_count} "
-                f"{c.name} ({c.domain})"
-            )
             desc_preview = c.description[:150].replace("\n", " ")
             if len(c.description) > 150:
-                desc_preview += "..."
-            click.echo(f"    desc: {desc_preview}")
+                desc_preview += "…"
+            header = f"[{c.score:.3f}] hits={c.hit_count}  [bold]{c.name}[/bold] ({c.domain})"
+            lines = [f"[dim]{desc_preview}[/dim]"]
             if c.keywords:
-                click.echo(f"    keywords: {', '.join(c.keywords[:10])}")
+                lines.append(f"keywords: {', '.join(c.keywords[:10])}")
             if c.articles:
-                click.echo(f"    articles: {', '.join(c.articles)}")
-
+                lines.append(f"articles: {', '.join(c.articles)}")
             if c.relations:
-                click.echo(f"    relations ({len(c.relations)}):")
-                for rel in c.relations[:5]:
-                    click.echo(
-                        f"      → {rel.get('name', '?')} ({rel.get('predicate', '')})"
-                    )
+                rel_strs = [f"→ {r.get('name', '?')} ({r.get('predicate', '')})" for r in c.relations[:5]]
                 if len(c.relations) > 5:
-                    click.echo(f"      ... +{len(c.relations) - 5} more")
-
-            click.echo(f"    scores: {_format_scores(c.scores_by_query, q_labels)}")
+                    rel_strs.append(f"… +{len(c.relations) - 5} more")
+                lines.append("relations: " + " | ".join(rel_strs))
+            lines.append(f"scores: {_format_scores(c.scores_by_query, q_labels)}")
+            console.print(Panel("\n".join(lines), title=header, border_style="blue"))
 
     # ── Cross-Relations ──
-    click.echo(f"\n{'─' * 70}")
-    click.echo(f"  🔗 Cross-Relations ({len(result.relations)} results)")
-    click.echo(f"{'─' * 70}")
-
+    console.rule(f"[bold]🔗 Cross-Relations ({len(result.relations)} results)")
     if not result.relations:
-        click.echo("  (no results)")
+        console.print("  [dim](no results)[/dim]")
     else:
+        rel_table = Table(show_lines=True, expand=True)
+        rel_table.add_column("Score", width=7, justify="center")
+        rel_table.add_column("Hits", width=5, justify="center")
+        rel_table.add_column("Source", style="cyan", width=18)
+        rel_table.add_column("→", width=2, justify="center")
+        rel_table.add_column("Target", style="green", width=18)
+        rel_table.add_column("Predicate", width=15)
+        rel_table.add_column("Description", ratio=1, overflow="ellipsis")
+
         for r in result.relations:
             src = r.source_name or r.source_concept_id[:8]
             tgt = r.target_name or r.target_concept_id[:8]
-            click.echo(
-                f"\n  [{r.score:.3f}] hits={r.hit_count} "
-                f"{src} → {tgt}"
+            desc = (r.description[:120] + "…") if r.description and len(r.description) > 120 else (r.description or "—")
+            rel_table.add_row(
+                f"{r.score:.3f}", str(r.hit_count), src, "→", tgt,
+                r.predicate, desc,
             )
-            click.echo(f"    predicate: {r.predicate}")
-            if r.description:
-                desc = r.description[:200].replace("\n", " ")
-                if len(r.description) > 200:
-                    desc += "..."
-                click.echo(f"    desc: {desc}")
-            click.echo(f"    scores: {_format_scores(r.scores_by_query, q_labels)}")
+        console.print(rel_table)
 
     # ── Summary ──
-    click.echo(f"\n{'═' * 70}")
+    console.rule("[bold]Summary")
     total = len(result.chunks) + len(result.concepts) + len(result.relations)
-    click.echo(
-        f"  Summary: {total} unique results "
+    console.print(
+        f"  [bold]{total}[/bold] unique results "
         f"({len(result.chunks)} chunks, {len(result.concepts)} concepts, "
         f"{len(result.relations)} relations) "
         f"from {len(all_queries)} query variants"
     )
-
     for q in all_queries:
         label = q_labels.get(q, q[:40])
         chunk_hits = sum(1 for c in result.chunks if q in c.scores_by_query)
         concept_hits = sum(1 for c in result.concepts if q in c.scores_by_query)
         rel_hits = sum(1 for r in result.relations if q in r.scores_by_query)
-        click.echo(f"    {label}: {chunk_hits} chunks, {concept_hits} concepts, {rel_hits} relations")
+        console.print(f"    {label}: {chunk_hits} chunks, {concept_hits} concepts, {rel_hits} relations")
 
-    click.echo()
-
+    console.print()
     gs.close()
 
 
