@@ -199,3 +199,43 @@ python -m raptor_pipeline.main knowledge_graph=llama_cpp summarizer=llama_cpp
 python -m raptor_pipeline.main knowledge_graph=llama_cpp max_concurrency=8 batch_size=8
 ```
 
+---
+
+## 📦 Backup / Restore данных (Qdrant + Neo4j)
+
+Для передачи данных другому разработчику или миграции на другой сервер.
+
+### Экспорт (на исходной машине)
+
+```powershell
+# 1. Qdrant
+docker run --rm -v qdrant_data:/data -v ${PWD}:/backup alpine tar czf /backup/qdrant_backup.tar.gz -C /data .
+
+# 2. Neo4j (обязательно остановить перед бэкапом)
+docker stop raptor_neo4j
+docker run --rm -v neo4j_data:/data -v ${PWD}:/backup alpine tar czf /backup/neo4j_backup.tar.gz -C /data .
+docker start raptor_neo4j
+```
+
+Результат: два файла `qdrant_backup.tar.gz` и `neo4j_backup.tar.gz` в текущей директории.
+
+### Импорт (на целевой машине)
+
+```powershell
+# 1. Поднять пустые контейнеры
+docker compose up -d
+
+# 2. Остановить для заливки данных
+docker stop raptor_qdrant raptor_neo4j
+
+# 3. Восстановить Qdrant
+docker run --rm -v qdrant_data:/data -v ${PWD}:/backup alpine sh -c "rm -rf /data/* && tar xzf /backup/qdrant_backup.tar.gz -C /data"
+
+# 4. Восстановить Neo4j
+docker run --rm -v neo4j_data:/data -v ${PWD}:/backup alpine sh -c "rm -rf /data/* && tar xzf /backup/neo4j_backup.tar.gz -C /data"
+
+# 5. Запустить
+docker start raptor_qdrant raptor_neo4j
+```
+
+> **💡 Как это работает:** одноразовый alpine-контейнер монтирует Docker volume и текущую папку, затем пакует/распаковывает файлы через `tar`. Данные в volume остаются после удаления контейнера.
