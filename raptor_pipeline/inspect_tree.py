@@ -142,9 +142,6 @@ def main(cfg: DictConfig) -> None:
     for root_id in roots:
         _build_tree(tree, nodes_map, root_id, show_full_text=show_full_text)
     console.print(tree)
-    
-    if not show_full_text:
-        console.print("\n[dim]Tip: Use 'full_text=true' to see complete content.[/dim]")
 
     # ── Show article summary from Neo4j ───────────────────────
     try:
@@ -180,6 +177,8 @@ def main(cfg: DictConfig) -> None:
         driver.close()
     except Exception as exc:
         print(f"\n(Не удалось загрузить саммари из Neo4j: {exc})")
+    if not show_full_text:
+        console.print("\n[dim]Tip: Use '--full-text' to see complete content.[/dim]")
 
 @hydra.main(config_path="conf", config_name="config", version_base=None)
 def _hydra_main(cfg: DictConfig) -> None:
