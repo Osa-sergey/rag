@@ -5,8 +5,8 @@ defaults:
 log_level: INFO
 
 # ── Thresholds ────────────────────────────────────────────────
-similarity_threshold: 0.85     # cosine ≥ 0.85 → same Concept
-min_keyword_confidence: 0.8    # only keywords with confidence ≥ 0.8
+similarity_threshold: 0.75     # cosine ≥ 0.85 → same Concept
+min_keyword_confidence: 0.95    # only keywords with confidence ≥ 0.8
 min_relation_confidence: 0.5   # only RELATED_TO edges with confidence ≥ 0.5
 max_prompt_tokens: 3000        # limit LLM prompt length
 
@@ -19,7 +19,7 @@ clustering:
   # Доступные:
   #   concept_builder.concept_clusterer.GreedyConceptClusterer   — greedy cosine (по умолчанию)
   #   concept_builder.concept_clusterer.HdbscanConceptClusterer  — HDBSCAN density-based
-  class_: concept_builder.concept_clusterer.GreedyConceptClusterer
+  class_: concept_builder.concept_clusterer.HdbscanConceptClusterer
   # Параметры HDBSCAN (игнорируются для Greedy):
   min_cluster_size: 2
   min_samples: 1
