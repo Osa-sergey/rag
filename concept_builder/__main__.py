@@ -637,12 +637,28 @@ def trace_keyword(word, article_id, override):
         click.echo(f"❌ Keyword '{word}' не найден в статье '{article_id}'")
         return
 
+    # Fetch description from HAS_KEYWORD edge
+    gs = container.graph_store()
+    kw_desc = None
+    with gs._driver.session(database=gs._database) as session:
+        desc_result = session.run(
+            """
+            MATCH (a:Article {id: $aid})-[r:HAS_KEYWORD]->(k:Keyword {word: $word})
+            RETURN r.description AS description, r.confidence AS confidence
+            """,
+            aid=article_id, word=word,
+        ).single()
+        if desc_result:
+            kw_desc = desc_result.get("description")
+            kw_conf = desc_result.get("confidence")
+
     from rich.tree import Tree as RichTree
     from rich.text import Text
     from rich.panel import Panel
 
     console = get_console()
 
+    conf_str = f"  conf={kw_conf:.2f}" if kw_conf is not None else ""
     kw_tree = RichTree(
         Text.assemble(
             ("🔑 ", "bold"),
@@ -650,9 +666,13 @@ def trace_keyword(word, article_id, override):
             (f"  в статье ", ""),
             (article_id, "cyan"),
             (f"  — {len(chunks)} чанков", "dim"),
+            (conf_str, "dim"),
         ),
         guide_style="bold bright_blue",
     )
+
+    if kw_desc:
+        kw_tree.add(Panel(kw_desc, title="📝 Описание keyword", border_style="dim", width=90))
 
     for chunk in chunks:
         level = chunk.get("level", 0)
