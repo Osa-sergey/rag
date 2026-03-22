@@ -523,7 +523,11 @@ def inspect_concept(concept_id, full_text, override):
         )
 
         for word, article_traces in word_traces.items():
-            word_branch = kw_branch.add(f"[bold cyan]{word}[/bold cyan]")
+            w_in = sum(1 for t in article_traces if t.get("in_concept"))
+            w_out = len(article_traces) - w_in
+            word_branch = kw_branch.add(
+                f"[bold cyan]{word}[/bold cyan] [dim]([green]{w_in} в концепте[/green], [red]{w_out} вне[/red])[/dim]"
+            )
 
             for trace in article_traces:
                 aid = trace.get("article_id", "?")
