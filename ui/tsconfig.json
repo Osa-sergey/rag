@@ -1,0 +1,42 @@
+{
+    "compilerOptions": {
+        "target": "ES2022",
+        "lib": [
+            "ES2022",
+            "DOM",
+            "DOM.Iterable"
+        ],
+        "module": "ESNext",
+        "moduleResolution": "bundler",
+        "jsx": "react-jsx",
+        "strict": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "noFallthroughCasesInSwitch": true,
+        "declaration": true,
+        "declarationMap": true,
+        "sourceMap": true,
+        "skipLibCheck": true,
+        "esModuleInterop": true,
+        "forceConsistentCasingInFileNames": true,
+        "resolveJsonModule": true,
+        "isolatedModules": true,
+        "paths": {
+            "@ui/ui-kit": [
+                "./packages/shared/ui-kit/src"
+            ],
+            "@ui/ui-kit/*": [
+                "./packages/shared/ui-kit/src/*"
+            ]
+        }
+    },
+    "include": [
+        "packages/**/*.ts",
+        "packages/**/*.tsx"
+    ],
+    "exclude": [
+        "node_modules",
+        "dist",
+        "storybook-static"
+    ]
+}

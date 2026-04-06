@@ -1,0 +1,102 @@
+/* ═══════════════════════════════════════════════════════
+   Design System Tokens — CSS Variables
+   Source of truth: ui/UXUI_DESIGN.md §1.2
+   ═══════════════════════════════════════════════════════ */
+
+:root,
+[data-theme="light"] {
+   /* --- Surface --- */
+   --bg-canvas: #f8f9fc;
+   --bg-node: #ffffff;
+   --bg-node-hover: #f0f4ff;
+   --bg-group: #f3f0ff;
+   --bg-panel: #ffffff;
+
+   /* --- Accent (Entity type) --- */
+   --color-article: #4a90e2;
+   --color-keyword: #50c878;
+   --color-concept: #9b59b6;
+   --color-step: #3b82f6;
+   --color-data: #f59e0b;
+   --color-dep: #94a3b8;
+
+   /* --- Status --- */
+   --color-success: #22c55e;
+   --color-error: #ef4444;
+   --color-warning: #f59e0b;
+   --color-info: #3b82f6;
+   --color-stale: #f97316;
+
+   /* --- Borders & Shadows --- */
+   --border-node: 1px solid #e2e8f0;
+   --shadow-node: 0 2px 8px rgba(0, 0, 0, 0.08);
+   --shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.12);
+   --radius-node: 12px;
+   --radius-badge: 6px;
+
+   /* --- Text --- */
+   --text-primary: #1e293b;
+   --text-secondary: #64748b;
+   --text-muted: #94a3b8;
+   --text-inverse: #ffffff;
+
+   /* --- Shimmer (Skeleton loading) --- */
+   --shimmer-hi: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="dark"] {
+   /* --- Surface: Zinc-based elevation ladder ---
+     Canvas → Node → Hover follows Tailwind Zinc scale (950 → 900 → 800)
+     Each step is perceptibly lighter, creating natural depth hierarchy */
+   --bg-canvas: #09090b;
+   --bg-node: #18181b;
+   --bg-node-hover: #27272a;
+   --bg-group: #1c1917;
+   --bg-panel: #0f0f12;
+
+   /* --- Accent: desaturated to prevent vibration on dark ---
+     Tailwind 400-level tones sit perfectly on Zinc backgrounds */
+   --color-article: #818cf8;
+   --color-keyword: #34d399;
+   --color-concept: #a78bfa;
+   --color-step: #60a5fa;
+   --color-data: #fbbf24;
+   --color-dep: #52525b;
+
+   /* --- Status: vivid but not neon --- */
+   --color-success: #10b981;
+   --color-error: #f87171;
+   --color-warning: #f59e0b;
+   --color-info: #6366f1;
+   --color-stale: #fb923c;
+
+   /* --- Borders: semi-transparent white for premium glass feel --- */
+   --border-node: 1px solid rgba(255, 255, 255, 0.08);
+   --shadow-node: 0 1px 3px rgba(0, 0, 0, 0.5);
+   --shadow-hover: 0 0 20px rgba(99, 102, 241, 0.15),
+      0 4px 16px rgba(0, 0, 0, 0.4);
+
+   /* --- Text: off-white primary, clear hierarchy ---
+     Zinc-50 → Zinc-400 → Zinc-600 */
+   --text-primary: #fafafa;
+   --text-secondary: #a1a1aa;
+   --text-muted: #52525b;
+   --text-inverse: #09090b;
+
+   /* --- Shimmer (brighter for dark surfaces) --- */
+   --shimmer-hi: rgba(255, 255, 255, 0.10);
+
+   /* --- Glassmorphism (from user's Pinterest board) --- */
+   --glass-bg: rgba(24, 24, 27, 0.7);
+   --glass-border: 1px solid rgba(255, 255, 255, 0.06);
+   --glass-blur: blur(16px);
+
+   /* --- Accent gradients & glow (cyber blue ↔ neon purple) --- */
+   --gradient-accent: linear-gradient(135deg, #6366f1 0%, #a78bfa 100%);
+   --gradient-edge: linear-gradient(90deg, #60a5fa, #a78bfa);
+   --glow-success: 0 0 16px rgba(16, 185, 129, 0.3);
+   --glow-error: 0 0 16px rgba(248, 113, 113, 0.3);
+   --glow-info: 0 0 16px rgba(99, 102, 241, 0.3);
+   --glow-warning: 0 0 16px rgba(245, 158, 11, 0.3);
+   --glow-stale: 0 0 16px rgba(251, 146, 60, 0.3);
+}
