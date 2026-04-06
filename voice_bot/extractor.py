@@ -10,7 +10,7 @@ import logging
 import re
 from datetime import date
 
-from voice_expense_bot.schemas import Expense, LLMConfig, Transfer
+from voice_bot.schemas import Expense, LLMConfig, Transfer
 
 logger = logging.getLogger(__name__)
 

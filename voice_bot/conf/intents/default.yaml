@@ -1,0 +1,132 @@
+# Intent classifier configuration
+# ─────────────────────────────────────────────────
+# Each intent has:
+#   name              — unique ID used in routing
+#   integration       — package name under voice_bot/integrations/
+#   action            — standardized action name (integration handles dispatch)
+#   reference_phrases — phrases for embedding-based cosine similarity matching
+#
+# Action naming convention:  <verb>_<object>
+#   create_transaction, show_tasks, update_task, ...
+#
+# unknown_threshold: min similarity to classify as known (else → "unknown")
+
+unknown_threshold: 0.35
+
+intents:
+  # ── Firefly III ─────────────────────────────────────────────
+
+  - name: expense
+    integration: firefly_iii
+    action: create_transaction
+    reference_phrases:
+      - потратил деньги
+      - купил
+      - заплатил за обед
+      - стоило
+      - расход
+      - трата
+      - оплатил
+      - цена
+      - оплата
+      - потратил 500 рублей на еду
+      - купил продукты в магазине
+      - заплатил за такси
+      - оплатил подписку
+
+  - name: transfer
+    integration: firefly_iii
+    action: create_transaction
+    reference_phrases:
+      - перевёл деньги
+      - перевод
+      - перевёл со счёта на счёт
+      - скинул на карту
+      - отправил перевод
+      - перевёл с сбера на альфу
+      - скинул на копилку
+      - перевёл с зарплатной на накопительный
+      - перевести деньги на другой счёт
+
+  - name: deposit
+    integration: firefly_iii
+    action: create_transaction
+    reference_phrases:
+      - получил зарплату
+      - пришла зарплата
+      - получил деньги
+      - пополнил счёт
+      - начислили проценты
+      - доход
+      - получил перевод
+      - зачислили
+      - пришли деньги
+      - получил дивиденды
+
+  # ── Obsidian Tasks ──────────────────────────────────────────
+
+  - name: task_create
+    integration: obsidian_tasks
+    action: create_task
+    reference_phrases:
+      - создай задачу
+      - запиши задачу
+      - добавь задачу
+      - нужно сделать
+      - поставь задачу
+      - напомни сделать
+      - создай напоминание
+      - запланируй
+      - поставь на завтра
+      - добавь в список дел
+      - запиши в задачи
+      - создай задачу купить продукты
+      - добавь задачу позвонить врачу
+
+  - name: task_show
+    integration: obsidian_tasks
+    action: show_tasks
+    reference_phrases:
+      - покажи задачи
+      - что у меня запланировано
+      - мои задачи
+      - список дел
+      - задачи на сегодня
+      - задачи на завтра
+      - что нужно сделать
+      - покажи план
+      - покажи дела
+      - задачи на эту неделю
+      - что запланировано на завтра
+
+  - name: task_update
+    integration: obsidian_tasks
+    action: update_task
+    reference_phrases:
+      - измени задачу
+      - обнови задачу
+      - перенеси задачу
+      - переименуй задачу
+      - исправь задачу
+      - поменяй дедлайн задачи
+      - сдвинь задачу на другой день
+      - задача изменилась
+      - обнови срок задачи
+      - измени приоритет задачи
+      - перепланируй задачу
+      - задачу купить молоко перенеси на пятницу
+
+  - name: agenda_show
+    integration: obsidian_tasks
+    action: show_agenda
+    reference_phrases:
+      - покажи мою агенду
+      - какой у меня план на день
+      - повестка дня
+      - расскажи про мой день
+      - мой план на сегодня
+      - что у меня сегодня запланировано на весь день
+      - повестка на завтра
+      - агенда на сегодня
+      - расскажи что у меня по плану
+      - дай сводку по задачам на день

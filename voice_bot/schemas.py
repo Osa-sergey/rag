@@ -1,4 +1,4 @@
-"""Pydantic configuration schemas and data models for Voice Expense Bot.
+"""Pydantic configuration schemas and data models for Voice Bot.
 
 Config hierarchy mirrors raptor_pipeline: Hydra YAML → Pydantic validation → DI.
 """
@@ -161,8 +161,8 @@ class CategoriesConfig(BaseModel):
 # ── Root config ───────────────────────────────────────────────
 
 
-class VoiceExpenseConfig(BaseModel):
-    """Root configuration for Voice Expense Bot.
+class VoiceBotConfig(BaseModel):
+    """Root configuration for Voice Bot.
 
     Validated at startup; all sub-configs are expanded from
     Hydra defaults composition.
@@ -177,6 +177,9 @@ class VoiceExpenseConfig(BaseModel):
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     categories: CategoriesConfig = Field(default_factory=CategoriesConfig)
+    firefly: dict = Field(default_factory=dict)
+    obsidian: dict = Field(default_factory=dict)
+    intents: dict = Field(default_factory=dict)  # loaded from conf/intents/default.yaml
 
     @field_validator("log_level")
     @classmethod

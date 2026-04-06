@@ -1,8 +1,8 @@
 # ===============================================================
-# Voice Expense Bot — Master Configuration
+# Voice Bot — Master Configuration
 # ===============================================================
-# python -m voice_expense_bot
-# python -m voice_expense_bot telegram.bot_token=YOUR_TOKEN
+# python -m voice_bot
+# python -m voice_bot telegram.bot_token=YOUR_TOKEN
 # ===============================================================
 
 defaults:
@@ -12,7 +12,10 @@ defaults:
   - database: postgresql
   - categories: default
   - telegram: default
+  - firefly: default
+  - obsidian: default
+  - intents: default
   - _self_
 
 log_level: INFO
-# log_file: logs/voice_expense_bot.jsonl
+# log_file: logs/voice_bot.jsonl

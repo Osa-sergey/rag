@@ -1,0 +1,11 @@
+# Obsidian vault integration
+# ─────────────────────────────────────────────────
+# vault_path    — абсолютный путь к вашему Obsidian хранилищу
+# daily_notes_folder — папка с daily notes (YYYY-MM-DD.md)
+# people_folder — папка с карточками людей (People/*.md)
+
+vault_path: "${oc.env:OBSIDIAN_VAULT_PATH,/path/to/vault}"
+daily_notes_folder: "Daily"
+tasks_folder: "Tasks"
+people_folder: "People"
+default_date: "today"

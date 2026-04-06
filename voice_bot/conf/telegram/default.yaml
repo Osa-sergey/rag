@@ -1,6 +1,6 @@
 # Telegram bot configuration
 # Set bot_token via env: TELEGRAM_BOT_TOKEN=your-token
-# or CLI: python -m voice_expense_bot telegram.bot_token=your-token
+# or CLI: python -m voice_bot telegram.bot_token=your-token
 # ──────────────────────────────────────────────────────────────
 
 bot_token: ${oc.env:TELEGRAM_BOT_TOKEN,}

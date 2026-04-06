@@ -11,7 +11,7 @@ from typing import Optional
 
 import asyncpg
 
-from voice_expense_bot.schemas import DatabaseConfig
+from voice_bot.schemas import DatabaseConfig
 
 logger = logging.getLogger(__name__)
 

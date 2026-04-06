@@ -1,4 +1,4 @@
-"""Expense category classifier using embedding-based cosine similarity.
+﻿"""Expense category classifier using embedding-based cosine similarity.
 
 Maps free-form expense descriptions to predefined categories using
 the same embedding model as the intent classifier.
@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from intent_classifier.classifier import EmbeddingProvider
+from voice_bot.intent_classifier.classifier import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
