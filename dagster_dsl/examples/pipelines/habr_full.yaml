@@ -1,0 +1,90 @@
+# ════════════════════════════════════════════════════════════════
+# Полный конвейер обработки Habr-статей
+# ════════════════════════════════════════════════════════════════
+#
+# Загрузка:
+#   from dagster_dsl import load_pipeline_yaml, inspect_pipeline_config
+#   p = load_pipeline_yaml("dagster_dsl/examples/pipelines/habr_full.yaml")
+#   inspect_pipeline_config(p)    # показать итоговый конфиг всех шагов
+#
+# Dagster:
+#   dagster dev -f dagster_dsl/examples/full_pipeline.py
+# ════════════════════════════════════════════════════════════════
+
+name: habr_full_pipeline
+
+# ── Global config — для всех шагов (nested YAML, не dot-notation) ───────────
+# Каждый шаг получает только те ключи, которые есть в его Pydantic-схеме.
+config:
+  log_level: INFO
+
+  # Эти ключи попадут только в шаги у которых есть поле 'stores' (raptor, concept)
+  stores:
+    neo4j:
+      uri: bolt://localhost:7687
+      password: raptor_password
+      user: neo4j
+    qdrant:
+      host: localhost
+      port: 6333
+
+metadata:
+  owner: data-team
+  schedule: daily
+
+# ── Шаги ──────────────────────────────────────────────────────
+steps:
+
+  # Шаг 1: Парсинг CSV → YAML
+  # Получит из global: log_level (есть в схеме)
+  # НЕ получит: stores (нет в DocumentParserConfig)
+  parse:
+    module: document_parser.parse_csv
+    config:
+      input_file: data/habr_posts.csv
+      html_column: body_html
+      output_dir: parsed_yaml
+    on_success:
+      - log_result
+
+  # Шаг 2: RAPTOR индексация
+  # Получит из global: log_level + stores.neo4j + stores.qdrant (есть в схеме)
+  # step config: переопределяет stores.neo4j.password для этого шага
+  raptor:
+    module: raptor_pipeline.run
+    depends_on: [parse]
+    config:
+      input_dir: parsed_yaml
+      max_concurrency: 4
+      stores:
+        neo4j:
+          password: raptor_specific_password  # переопределяет global
+    on_failure:
+      - retry:
+          max_attempts: 3
+          delay: 30
+      - send_alert:
+          channel: "#data-errors"
+
+  # Шаг 3: Topic Modeling (параллельно с raptor)
+  # Получит из global: log_level (есть в TopicModelerConfig)
+  # НЕ получит: stores (нет в TopicModelerConfig)
+  topics:
+    module: topic_modeler.train
+    depends_on: [parse]
+    config:
+      input_dir: parsed_yaml
+
+  # Шаг 4: Concept Builder
+  # Получит из global: log_level + stores (есть в ConceptBuilderConfig)
+  concepts:
+    module: concept_builder.process
+    depends_on: [raptor, topics]
+    config:
+      base_article: "986380"
+      max_articles: 10
+      strategy: bfs
+    on_success:
+      - log_result
+      - notify:
+          message: "Concepts built successfully!"
