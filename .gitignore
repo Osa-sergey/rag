@@ -22,3 +22,11 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# UI & Node
+node_modules/
+dist/
+build/
+.next/
+.svelte-kit/
+coverage/
